@@ -1,5 +1,5 @@
 numpy 
-torch==1.13.0 
+torch==2.6.0
 tensorboard==2.18 
 gym==0.10.5 
-gym numpy-stl
+numpy-stl
