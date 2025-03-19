@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns  # Thêm seaborn
 import csv
 from torch.utils.tensorboard import SummaryWriter
 import argparse
@@ -17,9 +18,17 @@ class Runner_MAPPO_MPE:
         self.env_name = env_name
         self.number = number
         self.seed = seed
+
         # Set random seed
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
+
+        # ---------------------------
+        # Thiết lập style seaborn
+        # ---------------------------
+        sns.set_theme(style="whitegrid", font_scale=1.2)
+        # Hoặc bạn có thể dùng: plt.style.use("seaborn-whitegrid")
+
         discrete = True
         # Create environment
         self.env = make_env(env_name, discrete=discrete)
@@ -43,11 +52,13 @@ class Runner_MAPPO_MPE:
         self.replay_buffer = ReplayBuffer(self.args)
 
         # Khởi tạo tensorboard writer
-        self.writer = SummaryWriter(log_dir='runs/MAPPO/MAPPO_env_{}_number_{}_seed_{}'.format(self.env_name, self.number, self.seed))
+        self.writer = SummaryWriter(
+            log_dir='runs/MAPPO/MAPPO_env_{}_number_{}_seed_{}'.format(self.env_name, self.number, self.seed)
+        )
 
         # Các danh sách lưu lại reward và bước evaluate
-        self.evaluate_rewards = []  # Danh sách reward từ evaluate
-        self.eval_steps = []        # Danh sách training steps tương ứng
+        self.evaluate_rewards = []
+        self.eval_steps = []
         self.total_steps = 0
 
         # Tạo folder lưu dữ liệu nếu chưa có
@@ -55,11 +66,14 @@ class Runner_MAPPO_MPE:
 
         # Thiết lập live plot
         plt.ion()
-        self.fig, self.ax = plt.subplots()
-        self.line, = self.ax.plot([], [], marker='o')
+        self.fig, self.ax = plt.subplots(figsize=(8,6))  # Thay đổi kích thước nếu muốn
+        # Vẽ line màu cam, không marker, và gắn nhãn "MAPPO"
+        (self.line,) = self.ax.plot([], [], color='orange', label='MAPPO')
+
         self.ax.set_xlabel('Training Steps')
         self.ax.set_ylabel('Episode Reward')
         self.ax.set_title('Spread')
+        self.ax.legend(loc='lower right')  # Legend ở góc phải dưới
         self.fig.show()
 
         if self.args.use_reward_norm:
@@ -70,21 +84,22 @@ class Runner_MAPPO_MPE:
             self.reward_scaling = RewardScaling(shape=self.args.N, gamma=self.args.gamma)
 
     def run(self):
-        evaluate_num = -1  # Số lần đánh giá đã thực hiện
+        evaluate_num = -1
         while self.total_steps < self.args.max_train_steps:
             if self.total_steps // self.args.evaluate_freq > evaluate_num:
-                self.evaluate_policy()  # Thực hiện đánh giá policy
+                self.evaluate_policy()
                 evaluate_num += 1
 
-            _, episode_steps = self.run_episode_mpe(evaluate=False)  # Chạy một episode training
+            _, episode_steps = self.run_episode_mpe(evaluate=False)
             self.total_steps += episode_steps
 
             if self.replay_buffer.episode_num == self.args.batch_size:
-                self.agent_n.train(self.replay_buffer, self.total_steps)  # Huấn luyện agent
+                self.agent_n.train(self.replay_buffer, self.total_steps)
                 self.replay_buffer.reset_buffer()
 
         self.evaluate_policy()  # Đánh giá lần cuối
         self.env.close()
+
         # Sau khi training, lưu file CSV và tắt chế độ live plot
         self.save_eval_csv()
         plt.ioff()
@@ -98,30 +113,29 @@ class Runner_MAPPO_MPE:
 
         evaluate_reward = evaluate_reward / self.args.evaluate_times
 
-        # Ghi nhận bước evaluate và reward
         self.eval_steps.append(self.total_steps)
         self.evaluate_rewards.append(evaluate_reward)
 
         print("total_steps:{} \t evaluate_reward:{}".format(self.total_steps, evaluate_reward))
-        self.writer.add_scalar('evaluate_step_rewards_{}'.format(self.env_name), evaluate_reward, global_step=self.total_steps)
+        self.writer.add_scalar(
+            'evaluate_step_rewards_{}'.format(self.env_name),
+            evaluate_reward,
+            global_step=self.total_steps
+        )
 
-        # Lưu numpy file (nếu cần)
-        #np.save('./data_train/MAPPO_env_{}_number_{}_seed_{}.npy'.format(self.env_name, self.number, self.seed),
-        #        np.array(self.evaluate_rewards))
         self.agent_n.save_model(self.env_name, self.number, self.seed, self.total_steps)
-
-        # Lưu CSV và cập nhật live plot
         self.save_eval_csv()
         self.plot_eval_rewards()
 
     def save_eval_csv(self):
-        csv_filename = './data_train/MAPPO_env_{}_number_{}_seed_{}.csv'.format(self.env_name, self.number, self.seed)
+        csv_filename = './data_train/MAPPO_env_{}_number_{}_seed_{}.csv'.format(
+            self.env_name, self.number, self.seed
+        )
         with open(csv_filename, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow(['Training Steps', 'Evaluation Reward'])
             for step, reward in zip(self.eval_steps, self.evaluate_rewards):
                 writer.writerow([step, reward])
-        #print("CSV file saved at:", csv_filename)
 
     def plot_eval_rewards(self):
         # Cập nhật dữ liệu cho plot
@@ -129,23 +143,41 @@ class Runner_MAPPO_MPE:
         self.line.set_ydata(self.evaluate_rewards)
         self.ax.relim()
         self.ax.autoscale_view()
+
+        # Thiết lập nhãn trục X (giả sử bạn huấn luyện tới 3e6 steps)
+        x_ticks = [0, 0.5e6, 1.0e6, 1.5e6, 2.0e6, 2.5e6, 3.0e6]
+        x_labels = ['0', '0.5M', '1.0M', '1.5M', '2.0M', '2.5M', '3.0M']
+        self.ax.set_xticks(x_ticks)
+        self.ax.set_xticklabels(x_labels)
+
+        # Vẽ lại (interactive)
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
+
         # Lưu file ảnh biểu đồ
-        plt.savefig('./data_train/MAPPO_env_{}_number_{}_seed_{}_eval.png'.format(self.env_name, self.number, self.seed))
+        plt.savefig(
+            './data_train/MAPPO_env_{}_number_{}_seed_{}_eval.png'.format(
+                self.env_name, self.number, self.seed
+            )
+        )
+
 
     def run_episode_mpe(self, evaluate=False):
         episode_reward = 0
         obs_n = self.env.reset()
+
         if self.args.use_reward_scaling:
             self.reward_scaling.reset()
+
         if self.args.use_rnn:
             self.agent_n.actor.rnn_hidden = None
             self.agent_n.critic.rnn_hidden = None
+
         for episode_step in range(self.args.episode_limit):
             a_n, a_logprob_n = self.agent_n.choose_action(obs_n, evaluate=evaluate)
-            s = np.array(obs_n).flatten()  # Global state là sự nối của tất cả các obs
+            s = np.array(obs_n).flatten()
             v_n = self.agent_n.get_value(s)
+
             obs_next_n, r_n, done_n, _ = self.env.step(a_n)
             episode_reward += r_n[0]
 
@@ -154,7 +186,9 @@ class Runner_MAPPO_MPE:
                     r_n = self.reward_norm(r_n)
                 elif self.args.use_reward_scaling:
                     r_n = self.reward_scaling(r_n)
-                self.replay_buffer.store_transition(episode_step, obs_n, s, v_n, a_n, a_logprob_n, r_n, done_n)
+                self.replay_buffer.store_transition(
+                    episode_step, obs_n, s, v_n, a_n, a_logprob_n, r_n, done_n
+                )
 
             obs_n = obs_next_n
             if all(done_n):
