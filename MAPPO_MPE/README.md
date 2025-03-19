@@ -6,7 +6,7 @@ This code only works in the environments where all agents are homogenous, such a
 You can dircetly run 'MAPPO_MPE_main.py' in your own IDE.<br />
 
 ## Trainning environments
-Check out the [PIPELINE](https://colab.research.google.com/drive/1nmFmerjXRA_JYw5jyEmBrk8PP2Us_A9s)
+Check out the [PIPELINE](https://colab.research.google.com/drive/1Ffmd-AXx6NehiddVK5NIgQOGM5MJE4Qt)
 We train our MAPPO in 'simple_spread' in MPE environment.<br />
 
 ## Requirements
