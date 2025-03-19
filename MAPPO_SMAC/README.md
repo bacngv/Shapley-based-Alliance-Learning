@@ -6,8 +6,8 @@ This is a concise Pytorch implementation of MAPPO in StarCraft II environment(SM
 You can dircetly run 'MAPPO_SMAC_main.py' in your own IDE.<br />
 
 ## Trainning environments
-Check out the [PIPELINE](https://colab.research.google.com/drive/1f8Aa8KTXwHayQgXitOxrx0ODThNpMpxS)
-You can set the 'env_index' in the codes to change the maps in StarCraft II. Here, we train our code in 3 maps.<br />
+- Check out the [PIPELINE](https://colab.research.google.com/drive/1f8Aa8KTXwHayQgXitOxrx0ODThNpMpxS)
+- You can set the 'env_index' in the codes to change the maps in StarCraft II. Here, we train our code in 3 maps.<br />
 env_index=0 represent '3m'<br />
 env_index=1 represent '8m'<br />
 env_index=2 represent '2s_3z'<br />
