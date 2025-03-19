@@ -20,7 +20,7 @@ class Runner_MAPPO_MPE:
         # Set random seed
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
-        discrete = False
+        discrete = True
         # Create environment
         self.env = make_env(env_name, discrete=discrete)
         self.args.N = self.env.n  # Số lượng agent
