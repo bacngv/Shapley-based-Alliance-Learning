@@ -69,7 +69,8 @@ class Runner_MAPPO_MPE:
         (self.line,) = self.ax.plot([], [], color='orange', label='MAPPO')
         self.ax.set_xlabel('Training Steps')
         self.ax.set_ylabel('Episode Reward')
-        self.ax.set_title('Spread')
+        env_title = self.env_name.replace("simple", "").replace("_", "").strip().capitalize()
+        self.ax.set_title(env_title)
         self.ax.legend(loc='lower right')
         self.fig.show()
 
