@@ -45,21 +45,24 @@ class Actor_MLP(nn.Module):
         super(Actor_MLP, self).__init__()
         self.fc1 = nn.Linear(actor_input_dim, args.mlp_hidden_dim)
         self.fc2 = nn.Linear(args.mlp_hidden_dim, args.mlp_hidden_dim)
-        self.fc3 = nn.Linear(args.mlp_hidden_dim, args.action_dim)
+        self.mean_layer = nn.Linear(args.mlp_hidden_dim, args.action_dim)  # Xuất trung bình
+        self.log_std_layer = nn.Linear(args.mlp_hidden_dim, args.action_dim)  # Xuất log_std
         self.activate_func = [nn.Tanh(), nn.ReLU()][args.use_relu]
 
         if args.use_orthogonal_init:
             print("------use_orthogonal_init------")
             orthogonal_init(self.fc1)
             orthogonal_init(self.fc2)
-            orthogonal_init(self.fc3, gain=0.01)
+            orthogonal_init(self.mean_layer, gain=0.01)
+            orthogonal_init(self.log_std_layer, gain=0.01)
 
     def forward(self, actor_input):
-        # actor_input.shape=(N, actor_input_dim)
         x = self.activate_func(self.fc1(actor_input))
         x = self.activate_func(self.fc2(x))
-        action_mean = torch.tanh(self.fc3(x))
-        return action_mean
+        mean = self.mean_layer(x)  # Trung bình không giới hạn
+        log_std = self.log_std_layer(x)
+        log_std = torch.clamp(log_std, min=-20, max=2)  # Giới hạn để tránh vấn đề số học
+        return mean, log_std
 
 # --- CRITIC (không cần thay đổi cho continuous action) ---
 class Critic_RNN(nn.Module):
@@ -164,22 +167,24 @@ class MAPPO_MULTIWALKER:
                 actor_inputs.append(torch.eye(self.N))
             actor_inputs = torch.cat(actor_inputs, dim=-1)
             
-            action_mean = self.actor(actor_inputs)
-            log_std = torch.zeros_like(action_mean)
+            mean, log_std = self.actor(actor_inputs)
             std = torch.exp(log_std)
-            dist = Normal(action_mean, std)
+            dist = Normal(mean, std)
             
             if evaluate:
-                a_n = torch.tanh(action_mean)
-                a_logprob_n = dist.log_prob(action_mean).sum(dim=-1)
-                raw_a_n = action_mean  # Không cần raw_action khi evaluate
+                a_n = torch.tanh(mean)  # Dùng mean đã squash khi đánh giá
+                raw_a_n = mean  # Lưu raw action
+                a_logprob_n = dist.log_prob(mean).sum(dim=-1)  # Tính log_prob cho nhất quán
             else:
                 raw_action = dist.sample()
                 a_n = torch.tanh(raw_action)
-                a_logprob_n = dist.log_prob(raw_action).sum(dim=-1)  # Log prob của raw_action
-                
+                a_logprob_n = dist.log_prob(raw_action).sum(dim=-1)
+                # Điều chỉnh log_prob cho biến đổi tanh
+                a_logprob_n -= torch.sum(2 * (np.log(2) - raw_action - F.softplus(-2 * raw_action)), dim=-1)
+                raw_a_n = raw_action
+            
             a_n_np = a_n.numpy()
-            raw_a_n_np = raw_action.numpy() if not evaluate else a_n.numpy()
+            raw_a_n_np = raw_a_n.numpy()
             a_logprob_np = a_logprob_n.numpy()
             
             actions_dict = {key: a_n_np[i] for i, key in enumerate(keys)}
@@ -187,7 +192,6 @@ class MAPPO_MULTIWALKER:
             logprob_dict = {key: a_logprob_np[i] for i, key in enumerate(keys)}
             
             return raw_actions_dict, actions_dict, logprob_dict
-
     def get_value(self, s):
         with torch.no_grad():
             critic_inputs = []
@@ -202,9 +206,9 @@ class MAPPO_MULTIWALKER:
 
     # Các hàm train, lr_decay, get_inputs, save_model, load_model giữ nguyên hoặc điều chỉnh tương ứng.
     def train(self, replay_buffer, total_steps):
-        batch = replay_buffer.get_training_data()  # get training data
+        batch = replay_buffer.get_training_data()  # Lấy dữ liệu huấn luyện
 
-        # Calculate the advantage using GAE
+        # Tính advantage bằng GAE
         adv = []
         gae = 0
         with torch.no_grad():
@@ -226,27 +230,33 @@ class MAPPO_MULTIWALKER:
                     self.critic.rnn_hidden = None
                     probs_now, values_now = [], []
                     for t in range(self.episode_limit):
-                        action_mean = self.actor(actor_inputs[index, t].reshape(self.mini_batch_size * self.N, -1))
-                        log_std = torch.zeros_like(action_mean)
+                        mean, log_std = self.actor(actor_inputs[index, t].reshape(self.mini_batch_size * self.N, -1))
                         std = torch.exp(log_std)
-                        dist_now = Normal(action_mean, std)
-                        probs_now.append(dist_now.log_prob(batch['raw_a_n'][index, t]).sum(dim=-1).reshape(self.mini_batch_size, self.N))
+                        dist_now = Normal(mean, std)
+                        raw_a_n_t = batch['raw_a_n'][index, t]
+                        log_prob = dist_now.log_prob(raw_a_n_t).sum(dim=-1)
+                        log_prob -= torch.sum(2 * (np.log(2) - raw_a_n_t - F.softplus(-2 * raw_a_n_t)), dim=-1)
+                        probs_now.append(log_prob.reshape(self.mini_batch_size, self.N))
                         v = self.critic(critic_inputs[index, t].reshape(self.mini_batch_size * self.N, -1))
                         values_now.append(v.reshape(self.mini_batch_size, self.N))
-                    probs_now = torch.stack(probs_now, dim=1)
+                    a_logprob_n_now = torch.stack(probs_now, dim=1)
                     values_now = torch.stack(values_now, dim=1)
                 else:
-                    action_mean = self.actor(actor_inputs[index])
-                    log_std = torch.zeros_like(action_mean)
+                    mean, log_std = self.actor(actor_inputs[index])
                     std = torch.exp(log_std)
-                    dist_now = Normal(action_mean, std)
+                    dist_now = Normal(mean, std)
                     a_logprob_n_now = dist_now.log_prob(batch['raw_a_n'][index]).sum(dim=-1)
-                    values_now = self.critic(critic_inputs[index]).squeeze(-1)
+                    a_logprob_n_now -= torch.sum(2 * (np.log(2) - batch['raw_a_n'][index] - F.softplus(-2 * batch['raw_a_n'][index])), dim=-1)
+                    values_now = self.critic(critic_inputs[index]).squeeze(-1)  # Gán values_now trong trường hợp không dùng RNN
 
                 ratios = torch.exp(a_logprob_n_now - batch['a_logprob_n'][index].detach())
                 surr1 = ratios * adv[index]
                 surr2 = torch.clamp(ratios, 1 - self.epsilon, 1 + self.epsilon) * adv[index]
                 actor_loss = -torch.min(surr1, surr2)
+
+                # Tính entropy
+                entropy = dist_now.entropy().sum(dim=-1)
+
                 if self.use_value_clip:
                     values_old = batch["v_n"][index, :-1].detach()
                     values_error_clip = torch.clamp(values_now - values_old, -self.epsilon, self.epsilon) + values_old - v_target[index]
@@ -255,8 +265,10 @@ class MAPPO_MULTIWALKER:
                 else:
                     critic_loss = (values_now - v_target[index]) ** 2
 
+                # Tổng hàm mất mát với entropy bonus
+                ac_loss = actor_loss.mean() + critic_loss.mean() - self.entropy_coef * entropy.mean()
+
                 self.ac_optimizer.zero_grad()
-                ac_loss = actor_loss.mean() + critic_loss.mean()
                 ac_loss.backward()
                 if self.use_grad_clip:
                     torch.nn.utils.clip_grad_norm_(self.ac_parameters, 10.0)
@@ -264,7 +276,6 @@ class MAPPO_MULTIWALKER:
 
         if self.use_lr_decay:
             self.lr_decay(total_steps)
-
     def lr_decay(self, total_steps):
         lr_now = self.lr * (1 - total_steps / self.max_train_steps)
         for p in self.ac_optimizer.param_groups:
