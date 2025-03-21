@@ -178,29 +178,28 @@ class Runner_MAPPO_MULTIWALKER:
                 agent.critic.rnn_hidden = None
 
         for episode_step in range(self.args.episode_limit):
-            # Chọn hành động cho tất cả các agent, nhận được dict
-            a_n, a_logprob_n = self.agent_n.choose_action(obs, evaluate=evaluate)
-            # Chuyển dict hành động thành numpy array theo thứ tự các key (ví dụ: 'walker_0', 'walker_1', 'walker_2')
+            # Lấy cả raw_action, a_n và a_logprob_n
+            raw_a_n, a_n, a_logprob_n = self.agent_n.choose_action(obs, evaluate=evaluate)
             a_n_array = np.stack([a_n[key] for key in sorted(a_n.keys())])
+            raw_a_n_array = np.stack([raw_a_n[key] for key in sorted(raw_a_n.keys())])
             a_logprob_array = np.stack([a_logprob_n[key] for key in sorted(a_logprob_n.keys())])
             
-            # Ví dụ về trạng thái toàn cục: nối các quan sát của 3 agent lại với nhau
             s = np.concatenate([obs[agent].flatten() for agent in self.env.agents])
             v_n = self.agent_n.get_value(s)
             obs_next, r_n, done, infos = self.env.step(a_n)
-            # Gộp reward của 3 agent (ví dụ sử dụng trung bình)
             total_r = sum(r_n.values()) / len(r_n)
             episode_reward += total_r
 
             if not evaluate:
+                r_n_array = np.array([r_n[agent] for agent in self.env.agents])
+                done_n_array = np.array([done[agent] for agent in self.env.agents])
                 if self.args.use_reward_norm:
-                    total_r = self.reward_norm(total_r)
+                    r_n_array = self.reward_norm(r_n_array)
                 elif self.args.use_reward_scaling:
-                    total_r = self.reward_scaling(total_r)
-                # Chuyển dict quan sát thành numpy array
+                    r_n_array = self.reward_scaling(r_n_array)
                 obs_array = np.stack([obs[agent] for agent in sorted(obs.keys())])
                 self.replay_buffer.store_transition(
-                    episode_step, obs_array, s, v_n, a_n_array, a_logprob_array, total_r, any(done.values())
+                    episode_step, obs_array, s, v_n, raw_a_n_array, a_logprob_array, r_n_array, done_n_array
                 )
 
             obs = obs_next

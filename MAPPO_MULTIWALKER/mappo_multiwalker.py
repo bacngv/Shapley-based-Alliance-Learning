@@ -154,27 +154,17 @@ class MAPPO_MULTIWALKER:
             self.ac_optimizer = torch.optim.Adam(self.ac_parameters, lr=self.lr)
 
     def choose_action(self, obs_n, evaluate):
-        """
-        Điều chỉnh để phù hợp với continuous action bounded trong [-1,1].
-        - Actor output là action_mean với shape (N, action_dim).
-        - Sử dụng phân phối Normal với log_std cố định (ở đây dùng 0, tức std = 1).
-        - Nếu evaluate, trả về tanh(action_mean) để đảm bảo nằm trong [-1,1].
-        - Nếu không evaluate, lấy mẫu từ Normal rồi áp dụng tanh.
-        """
         with torch.no_grad():
-            # Sắp xếp dictionary theo key để đảm bảo thứ tự nhất định
             keys = sorted(obs_n.keys())
             obs_list = [obs_n[key] for key in keys]
-            obs_tensor = torch.tensor(np.stack(obs_list), dtype=torch.float32)  # shape: (N, obs_dim)
+            obs_tensor = torch.tensor(np.stack(obs_list), dtype=torch.float32)
             
             actor_inputs = [obs_tensor]
             if self.add_agent_id:
-                # Thêm one-hot vector cho mỗi agent.
                 actor_inputs.append(torch.eye(self.N))
-            actor_inputs = torch.cat(actor_inputs, dim=-1)  # shape: (N, actor_input_dim)
+            actor_inputs = torch.cat(actor_inputs, dim=-1)
             
-            action_mean = self.actor(actor_inputs)  # shape=(N, action_dim)
-            # Khởi tạo log_std = 0 => std = 1
+            action_mean = self.actor(actor_inputs)
             log_std = torch.zeros_like(action_mean)
             std = torch.exp(log_std)
             dist = Normal(action_mean, std)
@@ -182,22 +172,21 @@ class MAPPO_MULTIWALKER:
             if evaluate:
                 a_n = torch.tanh(action_mean)
                 a_logprob_n = dist.log_prob(action_mean).sum(dim=-1)
+                raw_a_n = action_mean  # Không cần raw_action khi evaluate
             else:
-                raw_action = dist.sample()  # raw_action có thể vượt ngoài [-1,1]
-                a_n = torch.tanh(raw_action)  # "Squash" về [-1,1]
-                epsilon = 1e-6
-                a_logprob_n = dist.log_prob(raw_action).sum(dim=-1) - torch.sum(torch.log(1 - a_n.pow(2) + epsilon), dim=-1)
-            
-            # Chuyển kết quả thành numpy arrays
+                raw_action = dist.sample()
+                a_n = torch.tanh(raw_action)
+                a_logprob_n = dist.log_prob(raw_action).sum(dim=-1)  # Log prob của raw_action
+                
             a_n_np = a_n.numpy()
+            raw_a_n_np = raw_action.numpy() if not evaluate else a_n.numpy()
             a_logprob_np = a_logprob_n.numpy()
-            # Tạo dictionary mapping cho các agent theo thứ tự key đã sắp xếp
+            
             actions_dict = {key: a_n_np[i] for i, key in enumerate(keys)}
+            raw_actions_dict = {key: raw_a_n_np[i] for i, key in enumerate(keys)}
             logprob_dict = {key: a_logprob_np[i] for i, key in enumerate(keys)}
             
-            return actions_dict, logprob_dict
-
-
+            return raw_actions_dict, actions_dict, logprob_dict
 
     def get_value(self, s):
         with torch.no_grad():
@@ -237,32 +226,27 @@ class MAPPO_MULTIWALKER:
                     self.critic.rnn_hidden = None
                     probs_now, values_now = [], []
                     for t in range(self.episode_limit):
-                        # Lưu ý: Đối với continuous action, actor output là mean; 
-                        # Ở đây bạn có thể tính lại log_prob dựa trên phân phối Normal như trong choose_action.
                         action_mean = self.actor(actor_inputs[index, t].reshape(self.mini_batch_size * self.N, -1))
                         log_std = torch.zeros_like(action_mean)
                         std = torch.exp(log_std)
                         dist_now = Normal(action_mean, std)
-                        probs_now.append(dist_now.log_prob(batch['a_n'][index, t]).sum(dim=-1).reshape(self.mini_batch_size, self.N))
+                        probs_now.append(dist_now.log_prob(batch['raw_a_n'][index, t]).sum(dim=-1).reshape(self.mini_batch_size, self.N))
                         v = self.critic(critic_inputs[index, t].reshape(self.mini_batch_size * self.N, -1))
                         values_now.append(v.reshape(self.mini_batch_size, self.N))
                     probs_now = torch.stack(probs_now, dim=1)
                     values_now = torch.stack(values_now, dim=1)
                 else:
-                    probs_now = self.actor(actor_inputs[index])
-                    values_now = self.critic(critic_inputs[index]).squeeze(-1)
-                    # Với continuous action, bạn cần tính log_prob theo cách riêng nếu dùng phân phối Normal.
-                    log_std = torch.zeros_like(probs_now)
+                    action_mean = self.actor(actor_inputs[index])
+                    log_std = torch.zeros_like(action_mean)
                     std = torch.exp(log_std)
-                    dist_now = Normal(probs_now, std)
-                    probs_now = dist_now.log_prob(batch['a_n'][index]).sum(dim=-1)
-                dist_entropy = 0  # Bạn có thể tính entropy nếu cần
-                a_logprob_n_now = probs_now
+                    dist_now = Normal(action_mean, std)
+                    a_logprob_n_now = dist_now.log_prob(batch['raw_a_n'][index]).sum(dim=-1)
+                    values_now = self.critic(critic_inputs[index]).squeeze(-1)
+
                 ratios = torch.exp(a_logprob_n_now - batch['a_logprob_n'][index].detach())
                 surr1 = ratios * adv[index]
                 surr2 = torch.clamp(ratios, 1 - self.epsilon, 1 + self.epsilon) * adv[index]
-                actor_loss = -torch.min(surr1, surr2) - self.entropy_coef * dist_entropy
-
+                actor_loss = -torch.min(surr1, surr2)
                 if self.use_value_clip:
                     values_old = batch["v_n"][index, :-1].detach()
                     values_error_clip = torch.clamp(values_now - values_old, -self.epsilon, self.epsilon) + values_old - v_target[index]

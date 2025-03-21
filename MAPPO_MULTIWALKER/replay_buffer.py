@@ -19,22 +19,21 @@ class ReplayBuffer:
             'obs_n': np.empty([self.batch_size, self.episode_limit, self.N, self.obs_dim]),
             's': np.empty([self.batch_size, self.episode_limit, self.state_dim]),
             'v_n': np.empty([self.batch_size, self.episode_limit + 1, self.N]),
-            'a_n': np.empty([self.batch_size, self.episode_limit, self.N, self.action_dim]),  # sửa lại shape
+            'raw_a_n': np.empty([self.batch_size, self.episode_limit, self.N, self.action_dim]),  # Thay a_n thành raw_a_n
             'a_logprob_n': np.empty([self.batch_size, self.episode_limit, self.N]),
             'r_n': np.empty([self.batch_size, self.episode_limit, self.N]),
             'done_n': np.empty([self.batch_size, self.episode_limit, self.N])
         }
         self.episode_num = 0
 
-    def store_transition(self, episode_step, obs_n, s, v_n, a_n, a_logprob_n, r_n, done_n):
+    def store_transition(self, episode_step, obs_n, s, v_n, raw_a_n, a_logprob_n, r_n, done_n):
         self.buffer['obs_n'][self.episode_num][episode_step] = obs_n
         self.buffer['s'][self.episode_num][episode_step] = s
         self.buffer['v_n'][self.episode_num][episode_step] = v_n
-        self.buffer['a_n'][self.episode_num][episode_step] = a_n
+        self.buffer['raw_a_n'][self.episode_num][episode_step] = raw_a_n  # Sửa từ 'a_n' thành 'raw_a_n'
         self.buffer['a_logprob_n'][self.episode_num][episode_step] = a_logprob_n
         self.buffer['r_n'][self.episode_num][episode_step] = r_n
         self.buffer['done_n'][self.episode_num][episode_step] = done_n
-
     def store_last_value(self, episode_step, v_n):
         self.buffer['v_n'][self.episode_num][episode_step] = v_n
         self.episode_num += 1
