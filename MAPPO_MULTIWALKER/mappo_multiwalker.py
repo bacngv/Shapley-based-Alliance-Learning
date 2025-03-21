@@ -22,23 +22,24 @@ class Actor_RNN(nn.Module):
 
         self.fc1 = nn.Linear(actor_input_dim, args.rnn_hidden_dim)
         self.rnn = nn.GRUCell(args.rnn_hidden_dim, args.rnn_hidden_dim)
-        self.fc2 = nn.Linear(args.rnn_hidden_dim, args.action_dim)
-        # Ở đây, thay vì softmax, ta sử dụng Tanh để đảm bảo đầu ra nằm trong [-1, 1]
+        self.fc_mean = nn.Linear(args.rnn_hidden_dim, args.action_dim)
+        self.fc_log_std = nn.Linear(args.rnn_hidden_dim, args.action_dim)  # thêm tầng log_std
         self.activate_func = [nn.Tanh(), nn.ReLU()][args.use_relu]
 
         if args.use_orthogonal_init:
             print("------use_orthogonal_init------")
             orthogonal_init(self.fc1)
             orthogonal_init(self.rnn)
-            orthogonal_init(self.fc2, gain=0.01)
+            orthogonal_init(self.fc_mean, gain=0.01)
+            orthogonal_init(self.fc_log_std, gain=0.01)
 
     def forward(self, actor_input):
-        # actor_input.shape=(N, actor_input_dim)
         x = self.activate_func(self.fc1(actor_input))
         self.rnn_hidden = self.rnn(x, self.rnn_hidden)
-        # Output là mean của hành động; sử dụng Tanh để giới hạn giá trị
-        action_mean = torch.tanh(self.fc2(self.rnn_hidden))
-        return action_mean
+        action_mean = torch.tanh(self.fc_mean(self.rnn_hidden))
+        log_std = self.fc_log_std(self.rnn_hidden)
+        log_std = torch.clamp(log_std, min=-20, max=2)
+        return action_mean, log_std
 
 class Actor_MLP(nn.Module):
     def __init__(self, args, actor_input_dim):
@@ -167,19 +168,28 @@ class MAPPO_MULTIWALKER:
                 actor_inputs.append(torch.eye(self.N))
             actor_inputs = torch.cat(actor_inputs, dim=-1)
             
-            mean, log_std = self.actor(actor_inputs)
+            if self.use_rnn:
+                output = self.actor(actor_inputs)
+                if isinstance(output, tuple):
+                    mean, log_std = output
+                else:
+                    mean = output
+                    log_std = torch.zeros_like(mean)
+            else:
+                mean, log_std = self.actor(actor_inputs)
+
+            
             std = torch.exp(log_std)
             dist = Normal(mean, std)
             
             if evaluate:
-                a_n = torch.tanh(mean)  # Dùng mean đã squash khi đánh giá
-                raw_a_n = mean  # Lưu raw action
-                a_logprob_n = dist.log_prob(mean).sum(dim=-1)  # Tính log_prob cho nhất quán
+                a_n = torch.tanh(mean)
+                raw_a_n = mean
+                a_logprob_n = dist.log_prob(mean).sum(dim=-1)
             else:
                 raw_action = dist.sample()
                 a_n = torch.tanh(raw_action)
                 a_logprob_n = dist.log_prob(raw_action).sum(dim=-1)
-                # Điều chỉnh log_prob cho biến đổi tanh
                 a_logprob_n -= torch.sum(2 * (np.log(2) - raw_action - F.softplus(-2 * raw_action)), dim=-1)
                 raw_a_n = raw_action
             
@@ -192,6 +202,7 @@ class MAPPO_MULTIWALKER:
             logprob_dict = {key: a_logprob_np[i] for i, key in enumerate(keys)}
             
             return raw_actions_dict, actions_dict, logprob_dict
+
     def get_value(self, s):
         with torch.no_grad():
             critic_inputs = []
@@ -233,7 +244,8 @@ class MAPPO_MULTIWALKER:
                         mean, log_std = self.actor(actor_inputs[index, t].reshape(self.mini_batch_size * self.N, -1))
                         std = torch.exp(log_std)
                         dist_now = Normal(mean, std)
-                        raw_a_n_t = batch['raw_a_n'][index, t]
+                        #raw_a_n_t = batch['raw_a_n'][index, t]
+                        raw_a_n_t = batch['raw_a_n'][index, t].reshape(self.mini_batch_size * self.N, -1)
                         log_prob = dist_now.log_prob(raw_a_n_t).sum(dim=-1)
                         log_prob -= torch.sum(2 * (np.log(2) - raw_a_n_t - F.softplus(-2 * raw_a_n_t)), dim=-1)
                         probs_now.append(log_prob.reshape(self.mini_batch_size, self.N))

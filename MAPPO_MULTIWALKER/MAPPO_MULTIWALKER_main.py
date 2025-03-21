@@ -182,10 +182,9 @@ class Runner_MAPPO_MULTIWALKER:
         if self.args.use_reward_scaling:
             self.reward_scaling.reset()
         if self.args.use_rnn:
-            # Nếu dùng RNN, reset hidden state cho từng agent
-            for agent in self.agent_n.agents:
-                agent.actor.rnn_hidden = None
-                agent.critic.rnn_hidden = None
+            self.agent_n.actor.rnn_hidden = None
+            self.agent_n.critic.rnn_hidden = None
+
 
         for episode_step in range(self.args.max_cycles):
             # Lấy cả raw_action, a_n và a_logprob_n từ policy
@@ -263,7 +262,7 @@ if __name__ == '__main__':
     parser.add_argument("--K_epochs", type=int, default=15, help="Số epoch cập nhật mỗi lần")
     parser.add_argument("--use_adv_norm", type=bool, default=True, help="Có sử dụng advantage normalization hay không")
     parser.add_argument("--use_reward_norm", type=bool, default=True, help="Có sử dụng reward normalization hay không")
-    parser.add_argument("--use_reward_scaling", type=bool, default=False, help="Có sử dụng reward scaling hay không")
+    parser.add_argument("--use_reward_scaling", type=bool, default=True, help="Có sử dụng reward scaling hay không")
     parser.add_argument("--entropy_coef", type=float, default=0.01, help="Hệ số entropy cho policy")
     parser.add_argument("--use_lr_decay", type=bool, default=True, help="Có sử dụng lr decay hay không")
     parser.add_argument("--use_grad_clip", type=bool, default=True, help="Có sử dụng gradient clipping hay không")
