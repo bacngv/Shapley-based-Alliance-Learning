@@ -7,7 +7,7 @@ class ReplayBuffer:
         self.N = args.N
         self.obs_dim = args.obs_dim
         self.state_dim = args.state_dim
-        self.action_dim = args.action_dim  # thêm action_dim
+        self.action_dim = args.action_dim  
         self.episode_limit = args.max_cycles
         self.batch_size = args.batch_size
         self.episode_num = 0
@@ -31,7 +31,7 @@ class ReplayBuffer:
         self.buffer['obs_n'][self.episode_num][episode_step] = obs_n
         self.buffer['s'][self.episode_num][episode_step] = s
         self.buffer['v_n'][self.episode_num][episode_step] = v_n
-        self.buffer['raw_a_n'][self.episode_num][episode_step] = raw_a_n  # Sửa từ 'a_n' thành 'raw_a_n'
+        self.buffer['raw_a_n'][self.episode_num][episode_step] = raw_a_n 
         self.buffer['a_logprob_n'][self.episode_num][episode_step] = a_logprob_n
         self.buffer['r_n'][self.episode_num][episode_step] = r_n
         self.buffer['done_n'][self.episode_num][episode_step] = done_n
