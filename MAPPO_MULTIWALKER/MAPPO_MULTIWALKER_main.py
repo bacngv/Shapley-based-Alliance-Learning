@@ -1,4 +1,6 @@
-# main.py
+import os
+os.environ["SDL_VIDEODRIVER"] = "dummy"  # Sử dụng dummy video driver cho SDL/pygame khi chạy trên môi trường headless (ví dụ: Colab)
+
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,9 +13,9 @@ from replay_buffer import ReplayBuffer
 from mappo_multiwalker import MAPPO_MULTIWALKER
 # Sử dụng Gym wrapper hỗ trợ nhiều agent cho multiwalker (parallel_env)
 from multiwalker import GymMultiWalkerWrapper
-import os
 from IPython import display as ipy_display  # Dùng cho live plot trên Colab nếu cần
 from matplotlib.ticker import FuncFormatter  # Format nhãn trục X
+import imageio  # Dùng để lưu GIF
 
 class Runner_MAPPO_MULTIWALKER:
     def __init__(self, args, env_name, number, seed):
@@ -43,10 +45,10 @@ class Runner_MAPPO_MULTIWALKER:
         else:
             self.args.action_dim_n = [self.env.action_space.shape[0] for _ in range(3)]
 
-        # Với các module hiện có, chúng ta lấy không gian của agent đầu tiên để làm tham chiếu
+        # Với các module hiện có, lấy không gian của agent đầu tiên làm tham chiếu
         self.args.obs_dim = self.args.obs_dim_n[0]
         self.args.action_dim = self.args.action_dim_n[0]
-        # Nếu cần trạng thái toàn cục, ta có thể ghép các quan sát lại với nhau
+        # Nếu cần trạng thái toàn cục, ghép các quan sát lại với nhau
         self.args.state_dim = self.args.obs_dim * 3
 
         print("observation_space=", self.env.observation_space)
@@ -54,7 +56,7 @@ class Runner_MAPPO_MULTIWALKER:
         print("action_space=", self.env.action_space)
         print("action_dim_n={}".format(self.args.action_dim_n))
 
-        # Tạo agent MAPPO cho đa tác tử, lưu ý rằng lớp MAPPO_MPE phải được điều chỉnh để xử lý dict dữ liệu
+        # Tạo agent MAPPO cho đa tác tử (MAPPO_MULTIWALKER)
         self.agent_n = MAPPO_MULTIWALKER(self.args)
         self.replay_buffer = ReplayBuffer(self.args)
 
@@ -92,7 +94,7 @@ class Runner_MAPPO_MULTIWALKER:
         evaluate_num = -1  # Số lần đánh giá đã thực hiện
         while self.total_steps < self.args.max_train_steps:
             if self.total_steps // self.args.evaluate_freq > evaluate_num:
-                self.evaluate_policy()  # Thực hiện đánh giá policy
+                self.evaluate_policy()  # Thực hiện đánh giá policy mỗi 5k bước
                 evaluate_num += 1
 
             _, episode_steps = self.run_episode(evaluate=False)  # Chạy một episode training
@@ -130,6 +132,11 @@ class Runner_MAPPO_MULTIWALKER:
         # Lưu CSV và cập nhật live plot
         self.save_eval_csv()
         self.plot_eval_rewards()
+
+        # Sau mỗi 20k bước training, render và lưu GIF
+        if self.total_steps % 20000 == 0:
+            gif_filename = './data_train/{}_steps_{}.gif'.format(self.env_name, self.total_steps)
+            self.render_and_save_gif(gif_filename)
 
     def save_eval_csv(self):
         csv_filename = './data_train/MAPPO_env_{}_number_{}_seed_{}.csv'.format(
@@ -172,13 +179,13 @@ class Runner_MAPPO_MULTIWALKER:
         if self.args.use_reward_scaling:
             self.reward_scaling.reset()
         if self.args.use_rnn:
-            # Nếu dùng RNN, reset hidden state cho từng agent (giả sử MAPPO_MPE có thuộc tính agents chứa các agent riêng)
+            # Nếu dùng RNN, reset hidden state cho từng agent
             for agent in self.agent_n.agents:
                 agent.actor.rnn_hidden = None
                 agent.critic.rnn_hidden = None
 
         for episode_step in range(self.args.episode_limit):
-            # Lấy cả raw_action, a_n và a_logprob_n
+            # Lấy cả raw_action, a_n và a_logprob_n từ policy
             raw_a_n, a_n, a_logprob_n = self.agent_n.choose_action(obs, evaluate=evaluate)
             a_n_array = np.stack([a_n[key] for key in sorted(a_n.keys())])
             raw_a_n_array = np.stack([raw_a_n[key] for key in sorted(raw_a_n.keys())])
@@ -212,6 +219,27 @@ class Runner_MAPPO_MULTIWALKER:
             self.replay_buffer.store_last_value(episode_step + 1, v_n)
 
         return episode_reward, episode_step + 1
+
+    def render_and_save_gif(self, filename='multiwalker.gif'):
+        """
+        Render environment và lưu các frame thành file GIF (chỉ dùng cho chế độ evaluate).
+        """
+        frames = []
+        obs, _ = self.env.reset()
+        done = False
+        while not done:
+            # Render frame dưới dạng rgb_array
+            frame = self.env.render(mode='rgb_array')
+            frames.append(frame)
+            
+            # Sử dụng policy đã train để chọn hành động
+            _, a_n, _ = self.agent_n.choose_action(obs, evaluate=True)
+            obs, rewards, done_flags, infos = self.env.step(a_n)
+            done = any(done_flags.values())
+        
+        imageio.mimsave(filename, frames, fps=30)
+        print("Saved GIF to", filename)
+        ipy_display.display(ipy_display.Image(filename=filename))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser("Hyperparameters Setting for MAPPO in Multiwalker Environment")
