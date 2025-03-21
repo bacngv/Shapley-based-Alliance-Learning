@@ -1,4 +1,4 @@
-import os
+import os 
 os.environ["SDL_VIDEODRIVER"] = "dummy"  # Sử dụng dummy video driver cho SDL/pygame khi chạy trên môi trường headless (ví dụ: Colab)
 
 import torch
@@ -69,6 +69,9 @@ class Runner_MAPPO_MULTIWALKER:
         self.eval_steps = []        # Danh sách training steps tương ứng
         self.total_steps = 0
 
+        # Khởi tạo biến lưu ngưỡng lưu GIF (mỗi 20k bước)
+        self.next_save_step = 20000
+
         # Tạo folder lưu dữ liệu nếu chưa có
         os.makedirs('./data_train', exist_ok=True)
 
@@ -94,7 +97,7 @@ class Runner_MAPPO_MULTIWALKER:
         evaluate_num = -1  # Số lần đánh giá đã thực hiện
         while self.total_steps < self.args.max_train_steps:
             if self.total_steps // self.args.evaluate_freq > evaluate_num:
-                self.evaluate_policy()  # Thực hiện đánh giá policy mỗi 5k bước
+                self.evaluate_policy()  # Thực hiện đánh giá policy mỗi evaluate_freq bước
                 evaluate_num += 1
 
             _, episode_steps = self.run_episode(evaluate=False)  # Chạy một episode training
@@ -133,10 +136,11 @@ class Runner_MAPPO_MULTIWALKER:
         self.save_eval_csv()
         self.plot_eval_rewards()
 
-        # Sau mỗi 20k bước training, render và lưu GIF
-        if self.total_steps % 20000 == 0:
+        # Kiểm tra nếu total_steps vượt qua ngưỡng lưu GIF
+        if self.total_steps >= self.next_save_step:
             gif_filename = './data_train/{}_steps_{}.gif'.format(self.env_name, self.total_steps)
             self.render_and_save_gif(gif_filename)
+            self.next_save_step += 20000  # cập nhật ngưỡng cho lần lưu sau
 
     def save_eval_csv(self):
         csv_filename = './data_train/MAPPO_env_{}_number_{}_seed_{}.csv'.format(
@@ -244,7 +248,7 @@ class Runner_MAPPO_MULTIWALKER:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser("Hyperparameters Setting for MAPPO in Multiwalker Environment")
     parser.add_argument("--max_train_steps", type=int, default=int(3e6), help="Số bước training tối đa")
-    parser.add_argument("--episode_limit", type=int, default=25, help="Số bước tối đa trong mỗi episode")
+    parser.add_argument("--episode_limit", type=int, default=100, help="Số bước tối đa trong mỗi episode")
     parser.add_argument("--evaluate_freq", type=float, default=5000, help="Đánh giá policy sau mỗi 'evaluate_freq' bước")
     parser.add_argument("--evaluate_times", type=int, default=3, help="Số lần đánh giá")
     parser.add_argument("--batch_size", type=int, default=32, help="Số episode cho 1 batch training")

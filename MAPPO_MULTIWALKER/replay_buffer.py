@@ -16,15 +16,16 @@ class ReplayBuffer:
 
     def reset_buffer(self):
         self.buffer = {
-            'obs_n': np.empty([self.batch_size, self.episode_limit, self.N, self.obs_dim]),
-            's': np.empty([self.batch_size, self.episode_limit, self.state_dim]),
-            'v_n': np.empty([self.batch_size, self.episode_limit + 1, self.N]),
-            'raw_a_n': np.empty([self.batch_size, self.episode_limit, self.N, self.action_dim]),  # Thay a_n thành raw_a_n
-            'a_logprob_n': np.empty([self.batch_size, self.episode_limit, self.N]),
-            'r_n': np.empty([self.batch_size, self.episode_limit, self.N]),
-            'done_n': np.empty([self.batch_size, self.episode_limit, self.N])
+            'obs_n': np.zeros([self.batch_size, self.episode_limit, self.N, self.obs_dim]),
+            's': np.zeros([self.batch_size, self.episode_limit, self.state_dim]),
+            'v_n': np.zeros([self.batch_size, self.episode_limit + 1, self.N]),
+            'raw_a_n': np.zeros([self.batch_size, self.episode_limit, self.N, self.action_dim]),
+            'a_logprob_n': np.zeros([self.batch_size, self.episode_limit, self.N]),
+            'r_n': np.zeros([self.batch_size, self.episode_limit, self.N]),
+            'done_n': np.zeros([self.batch_size, self.episode_limit, self.N])
         }
         self.episode_num = 0
+
 
     def store_transition(self, episode_step, obs_n, s, v_n, raw_a_n, a_logprob_n, r_n, done_n):
         self.buffer['obs_n'][self.episode_num][episode_step] = obs_n
