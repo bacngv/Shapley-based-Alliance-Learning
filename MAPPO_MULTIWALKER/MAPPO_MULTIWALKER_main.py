@@ -32,10 +32,9 @@ class Runner_MAPPO_MULTIWALKER:
         # Thiết lập style cho seaborn
         # ---------------------------
         sns.set_theme(style="whitegrid", font_scale=1.2)
-
         discrete = False
         # Tạo môi trường multiwalker với 3 agent thông qua wrapper mới
-        self.env = GymMultiWalkerWrapper(n_walkers=3, terrain_length=200, max_cycles=500)
+        self.env = GymMultiWalkerWrapper(n_walkers=3, terrain_length=200, max_cycles=args.max_cycles)
         # Cập nhật số lượng agent thành 3
         self.args.N = 3  
         # Giả sử không gian quan sát của các agent giống nhau
@@ -188,7 +187,7 @@ class Runner_MAPPO_MULTIWALKER:
                 agent.actor.rnn_hidden = None
                 agent.critic.rnn_hidden = None
 
-        for episode_step in range(self.args.episode_limit):
+        for episode_step in range(self.args.max_cycles):
             # Lấy cả raw_action, a_n và a_logprob_n từ policy
             raw_a_n, a_n, a_logprob_n = self.agent_n.choose_action(obs, evaluate=evaluate)
             a_n_array = np.stack([a_n[key] for key in sorted(a_n.keys())])
@@ -248,7 +247,7 @@ class Runner_MAPPO_MULTIWALKER:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser("Hyperparameters Setting for MAPPO in Multiwalker Environment")
     parser.add_argument("--max_train_steps", type=int, default=int(3e6), help="Số bước training tối đa")
-    parser.add_argument("--episode_limit", type=int, default=100, help="Số bước tối đa trong mỗi episode")
+    parser.add_argument("--max_cycles", type=int, default=500, help="Số bước tối đa trong mỗi episode")
     parser.add_argument("--evaluate_freq", type=float, default=5000, help="Đánh giá policy sau mỗi 'evaluate_freq' bước")
     parser.add_argument("--evaluate_times", type=int, default=3, help="Số lần đánh giá")
     parser.add_argument("--batch_size", type=int, default=32, help="Số episode cho 1 batch training")

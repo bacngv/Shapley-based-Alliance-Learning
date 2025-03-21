@@ -113,7 +113,7 @@ class MAPPO_MULTIWALKER:
         self.action_dim = args.action_dim
         self.obs_dim = args.obs_dim
         self.state_dim = args.state_dim
-        self.episode_limit = args.episode_limit
+        self.episode_limit = args.max_cycles
         self.rnn_hidden_dim = args.rnn_hidden_dim
 
         self.batch_size = args.batch_size

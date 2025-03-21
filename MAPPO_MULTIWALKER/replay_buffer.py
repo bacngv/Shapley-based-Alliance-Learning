@@ -8,7 +8,7 @@ class ReplayBuffer:
         self.obs_dim = args.obs_dim
         self.state_dim = args.state_dim
         self.action_dim = args.action_dim  # thêm action_dim
-        self.episode_limit = args.episode_limit
+        self.episode_limit = args.max_cycles
         self.batch_size = args.batch_size
         self.episode_num = 0
         self.buffer = None
@@ -42,9 +42,5 @@ class ReplayBuffer:
     def get_training_data(self):
         batch = {}
         for key in self.buffer.keys():
-            # Đối với continuous action, 'a_n' nên được lưu dưới dạng float32
-            if key == 'a_n':
-                batch[key] = torch.tensor(self.buffer[key], dtype=torch.float32)
-            else:
-                batch[key] = torch.tensor(self.buffer[key], dtype=torch.float32)
+            batch[key] = torch.tensor(self.buffer[key], dtype=torch.float32)
         return batch
