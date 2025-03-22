@@ -32,7 +32,7 @@ class Runner_MAPPO_MULTIWALKER:
         discrete = False
 
         # Create multiwalker environment with 3 agents
-        self.env = GymMultiWalkerWrapper(n_walkers=3, terrain_length=200, max_cycles=args.max_cycles)
+        self.env = GymMultiWalkerWrapper(n_walkers=3, terrain_length=500, max_cycles=args.max_cycles)
         self.args.N = 3  
         self.args.obs_dim_n = [self.env.observation_space.shape[0] for _ in range(3)]
         if discrete:
@@ -236,7 +236,7 @@ if __name__ == '__main__':
     parser.add_argument("--K_epochs", type=int, default=15, help="Number of update epochs")
     parser.add_argument("--use_adv_norm", type=bool, default=True, help="Use advantage normalization")
     parser.add_argument("--use_reward_norm", type=bool, default=True, help="Use reward normalization")
-    parser.add_argument("--use_reward_scaling", type=bool, default=True, help="Use reward scaling")
+    parser.add_argument("--use_reward_scaling", type=bool, default=False, help="Use reward scaling")
     parser.add_argument("--entropy_coef", type=float, default=0.01, help="Entropy coefficient for policy")
     parser.add_argument("--use_lr_decay", type=bool, default=True, help="Use learning rate decay")
     parser.add_argument("--use_grad_clip", type=bool, default=True, help="Use gradient clipping")
