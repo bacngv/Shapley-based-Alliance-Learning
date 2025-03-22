@@ -11,7 +11,7 @@ class GymMultiWalkerWrapper(gym.Env):
 
     def __init__(self, render_mode="rgb_array", **kwargs):
         # Add the render_mode parameter when initializing the environment
-        self.env = multiwalker_v9.parallel_env(render_mode=render_mode,forward_reward=50.0, **kwargs)
+        self.env = multiwalker_v9.parallel_env(render_mode=render_mode,forward_reward=20.0, terminate_reward=-50.0, fall_reward=-10.0, **kwargs)
         # Retrieve the list of agents, using the first three agents
         self.agents = self.env.possible_agents[:3]
         # Initial reset to establish observation and action spaces
