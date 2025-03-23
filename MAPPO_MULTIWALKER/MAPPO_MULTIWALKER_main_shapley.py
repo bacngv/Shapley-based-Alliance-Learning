@@ -10,7 +10,7 @@ from torch.utils.tensorboard import SummaryWriter
 import argparse
 from normalization import Normalization, RewardScaling
 from replay_buffer import ReplayBuffer
-from mappo_multiwalker import MAPPO_MULTIWALKER
+from mappo_multiwalker_shapley import MAPPO_MULTIWALKER
 from multiwalker import GymMultiWalkerWrapper
 from IPython import display as ipy_display
 from matplotlib.ticker import FuncFormatter
@@ -175,8 +175,9 @@ class Runner_MAPPO_MULTIWALKER:
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
 
-        plt.savefig('./data_train/MAPPO_env_{}_number_{}_seed_{}_eval.png'.format(
+        self.fig.savefig('./data_train/MAPPO_env_{}_number_{}_seed_{}_eval.png'.format(
             self.env_name, self.number, self.seed))
+
 
     def plot_shapley_rewards(self):
         if not self.lines_shapley:
