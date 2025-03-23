@@ -32,10 +32,8 @@ def orthogonal_init(layer, gain=1.0):
 class Actor_RNN(nn.Module):
     """
     RNN-based actor network for continuous actions.
-    
-    This network processes the input through a fully connected layer,
-    then feeds it into a GRU cell to update its hidden state. It outputs
-    the mean and log standard deviation of the action distribution.
+    Processes input via a fully connected layer, updates a GRU hidden state,
+    and outputs the mean and log standard deviation for the action distribution.
     """
     def __init__(self, args, actor_input_dim):
         super(Actor_RNN, self).__init__()
@@ -44,7 +42,7 @@ class Actor_RNN(nn.Module):
         self.rnn = nn.GRUCell(args.rnn_hidden_dim, args.rnn_hidden_dim)  # GRU cell
         self.fc_mean = nn.Linear(args.rnn_hidden_dim, args.action_dim)  # Outputs action mean
         self.fc_log_std = nn.Linear(args.rnn_hidden_dim, args.action_dim)  # Outputs log standard deviation
-        self.activate_func = [nn.Tanh(), nn.ReLU()][args.use_relu]  # Select activation function based on args
+        self.activate_func = [nn.Tanh(), nn.ReLU()][args.use_relu]  # Choose activation function based on args
 
         # Apply orthogonal initialization if specified
         if args.use_orthogonal_init:
@@ -57,9 +55,9 @@ class Actor_RNN(nn.Module):
     def forward(self, actor_input):
         # Pass input through the first layer and activation function
         x = self.activate_func(self.fc1(actor_input))
-        # Update the GRU hidden state with current input
+        # Update the GRU hidden state with the current input
         self.rnn_hidden = self.rnn(x, self.rnn_hidden)
-        # Compute the action mean with a tanh squashing function
+        # Compute the action mean with tanh squashing
         action_mean = torch.tanh(self.fc_mean(self.rnn_hidden))
         # Compute the log standard deviation and clamp its values
         log_std = torch.clamp(self.fc_log_std(self.rnn_hidden), min=-20, max=2)
@@ -71,9 +69,7 @@ class Actor_RNN(nn.Module):
 class Actor_MLP(nn.Module):
     """
     MLP-based actor network for continuous actions.
-    
-    This network consists of two hidden layers followed by two output layers that
-    generate the mean and log standard deviation of the action distribution.
+    Consists of two hidden layers, outputting the mean and log standard deviation.
     """
     def __init__(self, args, actor_input_dim):
         super(Actor_MLP, self).__init__()
@@ -95,7 +91,7 @@ class Actor_MLP(nn.Module):
         x = self.activate_func(self.fc1(actor_input))  # Pass through first layer and activation
         x = self.activate_func(self.fc2(x))  # Pass through second layer and activation
         mean = self.mean_layer(x)  # Compute action mean
-        # Compute log std and clamp its values to a reasonable range
+        # Compute log std and clamp its values
         log_std = torch.clamp(self.log_std_layer(x), min=-20, max=2)
         return mean, log_std
 
@@ -105,16 +101,15 @@ class Actor_MLP(nn.Module):
 class Critic_RNN(nn.Module):
     """
     RNN-based critic network that estimates the state value.
-    
-    This network processes the critic input via a fully connected layer,
-    updates its hidden state with a GRU cell, and outputs a scalar value.
+    Processes input via a fully connected layer, updates a GRU hidden state,
+    and outputs a scalar value.
     """
     def __init__(self, args, critic_input_dim):
         super(Critic_RNN, self).__init__()
         self.rnn_hidden = None  # GRU hidden state
         self.fc1 = nn.Linear(critic_input_dim, args.rnn_hidden_dim)  # Fully connected layer
         self.rnn = nn.GRUCell(args.rnn_hidden_dim, args.rnn_hidden_dim)  # GRU cell
-        self.fc2 = nn.Linear(args.rnn_hidden_dim, 1)  # Outputs the value estimation
+        self.fc2 = nn.Linear(args.rnn_hidden_dim, 1)  # Output for state value
         self.activate_func = [nn.Tanh(), nn.ReLU()][args.use_relu]  # Activation function
         
         # Apply orthogonal initialization if specified
@@ -125,8 +120,8 @@ class Critic_RNN(nn.Module):
             orthogonal_init(self.fc2)
 
     def forward(self, critic_input):
-        x = self.activate_func(self.fc1(critic_input))  # Pass input through first layer and activation
-        self.rnn_hidden = self.rnn(x, self.rnn_hidden)  # Update hidden state via GRU
+        x = self.activate_func(self.fc1(critic_input))  # Process input through fc layer and activation
+        self.rnn_hidden = self.rnn(x, self.rnn_hidden)  # Update hidden state
         value = self.fc2(self.rnn_hidden)  # Compute state value
         return value
 
@@ -136,8 +131,7 @@ class Critic_RNN(nn.Module):
 class Critic_MLP(nn.Module):
     """
     MLP-based critic network that estimates the state value.
-    
-    This network uses two hidden layers and an output layer to compute the state value.
+    Uses two hidden layers and one output layer.
     """
     def __init__(self, args, critic_input_dim):
         super(Critic_MLP, self).__init__()
@@ -154,8 +148,8 @@ class Critic_MLP(nn.Module):
             orthogonal_init(self.fc3)
 
     def forward(self, critic_input):
-        x = self.activate_func(self.fc1(critic_input))  # Pass through first hidden layer and activation
-        x = self.activate_func(self.fc2(x))  # Pass through second hidden layer and activation
+        x = self.activate_func(self.fc1(critic_input))  # Process through first hidden layer
+        x = self.activate_func(self.fc2(x))  # Process through second hidden layer
         value = self.fc3(x)  # Compute state value
         return value
 
@@ -169,8 +163,7 @@ class Critic_MLP(nn.Module):
 class PhiNet(nn.Module):
     """
     Embedding network that maps observations to a latent embedding space.
-    
-    It consists of two fully connected layers with ReLU activation.
+    Consists of two fully connected layers with ReLU activations.
     """
     def __init__(self, obs_dim, embed_dim):
         super(PhiNet, self).__init__()
@@ -188,9 +181,8 @@ class PhiNet(nn.Module):
 # ----------------------------
 class AllianceValueNet(nn.Module):
     """
-    Network to predict the value of an alliance (or coalition) based on embeddings.
-    
-    It uses a hidden layer and then outputs a scalar value representing the alliance value.
+    Network to predict the alliance (coalition) value based on embeddings.
+    Uses a hidden layer and outputs a scalar value representing the alliance value.
     """
     def __init__(self, embed_dim, hidden_dim):
         super(AllianceValueNet, self).__init__()
@@ -199,7 +191,7 @@ class AllianceValueNet(nn.Module):
         self.relu = nn.ReLU()  # ReLU activation
     
     def forward(self, global_embedding):
-        x = self.relu(self.fc1(global_embedding))  # Apply hidden layer with activation
+        x = self.relu(self.fc1(global_embedding))  # Hidden layer transformation
         alliance_value = self.fc2(x)  # Compute alliance value
         return alliance_value
 
@@ -272,19 +264,21 @@ def allocate_rewards(global_reward, shapley_values, alpha=0.8):
     allocated = alpha * shapley_values + (1 - alpha) * equal_reward
     return allocated
 
-def compute_alliance_loss(phi_net, alliance_net, obs_all, num_permutations=5, num_synergy_samples=8):
+# -------------------------------------------------------------------------------
+# New Alliance Loss Function with Order Loss based on Global Reward
+# -------------------------------------------------------------------------------
+def compute_alliance_loss(phi_net, alliance_net, obs_all, global_reward, num_synergy_samples=8):
     """
     Compute the combined loss for the phi_net and alliance_net with three components:
-      1. Loss for the empty coalition (should be zero).
-      2. Order consistency loss: ensuring that cumulative marginal contributions over a permutation
-         match the total alliance value.
-      3. Synergy loss: for two disjoint subsets X and Y, ensuring that f(X ∪ Y) >= f(X) + f(Y).
+      1. Empty coalition loss: f(empty) should be 0.
+      2. Order loss: f(total alliance) should match the global reward.
+      3. Synergy loss: For two disjoint subsets X and Y, ensure that f(X ∪ Y) >= f(X) + f(Y).
     
     Args:
         phi_net (nn.Module): Embedding network mapping observations to embeddings.
         alliance_net (nn.Module): Network predicting alliance value from embeddings.
         obs_all (torch.Tensor): Observations for all agents with shape (N, obs_dim).
-        num_permutations (int): Number of permutations for order consistency loss.
+        global_reward (torch.Tensor or scalar): The total global reward for the current timestep.
         num_synergy_samples (int): Number of samples for computing synergy loss.
     
     Returns:
@@ -299,28 +293,15 @@ def compute_alliance_loss(phi_net, alliance_net, obs_all, num_permutations=5, nu
     f_empty = alliance_net(empty_embedding)
     loss_empty = (f_empty ** 2).mean()
 
-    # 2. Order consistency loss:
+    # 2. Order loss: f(total alliance) should match the global reward.
     total_embedding = phi_net(obs_all).sum(dim=0, keepdim=True)
     f_total = alliance_net(total_embedding)
-    loss_order = 0.0
-    for _ in range(num_permutations):
-        perm = torch.randperm(N, device=device)
-        cumulative = torch.zeros(1, embed_dim, device=device)
-        f_values = []
-        # For each agent in the permutation, update cumulative embedding and compute alliance value.
-        for idx in perm:
-            emb = phi_net(obs_all[idx].unsqueeze(0))
-            cumulative = cumulative + emb
-            f_val = alliance_net(cumulative)
-            f_values.append(f_val)
-        # The loss is the squared difference between the total alliance value and the cumulative value.
-        f_perm_total = f_values[-1]
-        loss_order += (f_total - f_perm_total).pow(2).mean()
-    loss_order = loss_order / num_permutations
+    # Mean squared error between f_total and global_reward.
+    loss_order = (f_total - global_reward).pow(2).mean()
 
     # 3. Synergy loss for disjoint subsets:
     embeddings = phi_net(obs_all)  # Get embeddings for all agents
-    
+
     # Generate mask for subset X: each agent is included with probability 0.5.
     mask_X = (torch.rand(num_synergy_samples, N, device=device) > 0.5)
     # Ensure X is neither empty nor full.
@@ -363,13 +344,12 @@ def compute_alliance_loss(phi_net, alliance_net, obs_all, num_permutations=5, nu
     return loss
 
 # -------------------------------------------------------------------------------
-# MAPPO MULTIWALKER with Integrated Shapley Reward
+# MAPPO MULTIWALKER with Integrated Shapley Reward and Alliance Loss
 # -------------------------------------------------------------------------------
-
 class MAPPO_MULTIWALKER:
     """
     Multi-Agent Proximal Policy Optimization (MAPPO) implementation for the Multiwalker
-    environment, with integrated Shapley reward allocation.
+    environment with integrated Shapley reward allocation and alliance loss.
     """
     def __init__(self, args):
         # Environment and training hyperparameters.
@@ -436,19 +416,18 @@ class MAPPO_MULTIWALKER:
         
         Args:
             obs_n (dict): Dictionary of agent observations.
-            evaluate (bool): If True, choose deterministic actions (for evaluation);
-                             otherwise, sample from the distribution.
+            evaluate (bool): If True, choose deterministic actions; otherwise, sample from the distribution.
         
         Returns:
             tuple: Raw actions, processed actions (after tanh squashing), and log probabilities.
         """
         with torch.no_grad():
-            # Ensure a consistent order by sorting agent keys.
+            # Sort agent keys to ensure consistent ordering.
             keys = sorted(obs_n.keys())
             obs_list = [obs_n[key] for key in keys]
             obs_tensor = torch.tensor(np.stack(obs_list), dtype=torch.float32)
             
-            # Prepare actor inputs; optionally include agent ID as a one-hot vector.
+            # Prepare actor inputs; optionally include agent IDs as one-hot vectors.
             actor_inputs = [obs_tensor]
             if self.add_agent_id:
                 actor_inputs.append(torch.eye(self.N))
@@ -460,14 +439,14 @@ class MAPPO_MULTIWALKER:
             dist = Normal(mean, std)
             
             if evaluate:
-                a_n = torch.tanh(mean)  # Use mean as action (deterministic)
+                a_n = torch.tanh(mean)  # Deterministic action using mean.
                 raw_a_n = mean
                 a_logprob_n = dist.log_prob(mean).sum(dim=-1)
             else:
-                raw_action = dist.sample()  # Sample action stochastically
+                raw_action = dist.sample()  # Sample action stochastically.
                 a_n = torch.tanh(raw_action)
                 a_logprob_n = dist.log_prob(raw_action).sum(dim=-1)
-                # Adjustment to account for tanh squashing.
+                # Adjust log probabilities to account for tanh squashing.
                 a_logprob_n -= torch.sum(2 * (np.log(2) - raw_action - F.softplus(-2 * raw_action)), dim=-1)
                 raw_a_n = raw_action
             
@@ -494,7 +473,7 @@ class MAPPO_MULTIWALKER:
         """
         with torch.no_grad():
             s = torch.tensor(s, dtype=torch.float32).unsqueeze(0).repeat(self.N, 1)
-            # Prepare critic input; include agent IDs if required.
+            # Prepare critic inputs; include agent IDs if required.
             critic_inputs = [s]
             if self.add_agent_id:
                 critic_inputs.append(torch.eye(self.N))
@@ -505,21 +484,19 @@ class MAPPO_MULTIWALKER:
     def train(self, replay_buffer, total_steps):
         """
         Train the MAPPO networks using data from the replay buffer.
-        
-        This function performs reward allocation using Shapley values,
-        computes advantages using Generalized Advantage Estimation (GAE),
-        and optimizes both the actor/critic networks and the alliance networks.
+        This includes reward allocation via Shapley values, GAE advantage computation,
+        and optimization of both actor/critic and alliance networks.
         
         Args:
-            replay_buffer: The buffer containing training data.
-            total_steps (int): Total number of training steps completed.
+            replay_buffer: Buffer containing training data.
+            total_steps (int): Total training steps completed.
         
         Returns:
-            tuple: Average Shapley reward and average true global reward.
+            tuple: Average allocated Shapley reward and average true global reward.
         """
         batch = replay_buffer.get_training_data()
         true_rewards = batch['r_n'].clone()
-        # Reallocate rewards for each time step using Shapley values.
+        # Reallocate rewards for each timestep using Shapley values.
         for i in range(batch['r_n'].shape[0]):
             for t in range(batch['r_n'].shape[1]):
                 global_reward = torch.sum(batch['r_n'][i, t])
@@ -541,7 +518,7 @@ class MAPPO_MULTIWALKER:
             if self.use_adv_norm:
                 adv = ((adv - adv.mean()) / (adv.std() + 1e-5))
 
-        # Get inputs for both actor and critic networks.
+        # Prepare inputs for both actor and critic networks.
         actor_inputs, critic_inputs = self.get_inputs(batch)
 
         # PPO optimization loop for K epochs.
@@ -552,7 +529,7 @@ class MAPPO_MULTIWALKER:
                     self.actor.rnn_hidden = None
                     self.critic.rnn_hidden = None
                     probs_now, values_now = [], []
-                    # Process each time step sequentially.
+                    # Process each timestep sequentially.
                     for t in range(self.episode_limit):
                         mean, log_std = self.actor(actor_inputs[index, t].reshape(self.mini_batch_size * self.N, -1))
                         std = torch.exp(log_std)
@@ -592,7 +569,7 @@ class MAPPO_MULTIWALKER:
 
                 ac_loss = actor_loss.mean() + critic_loss.mean() - self.entropy_coef * entropy.mean()
 
-                # Perform gradient descent step.
+                # Gradient descent step.
                 self.ac_optimizer.zero_grad()
                 ac_loss.backward()
                 if self.use_grad_clip:
@@ -609,7 +586,9 @@ class MAPPO_MULTIWALKER:
         for i in range(batch['obs_n'].shape[0]):
             t = torch.randint(low=0, high=batch['obs_n'].shape[1], size=(1,)).item()
             obs_all = batch['obs_n'][i, t]
-            alliance_loss_total += compute_alliance_loss(self.phi_net, self.alliance_net, obs_all, num_permutations=5)
+            # Use true_rewards for global_reward calculation.
+            global_reward = torch.sum(true_rewards[i, t])
+            alliance_loss_total += compute_alliance_loss(self.phi_net, self.alliance_net, obs_all, global_reward, num_synergy_samples=8)
             count += 1
         alliance_loss_total = alliance_loss_total / count
 
@@ -617,7 +596,7 @@ class MAPPO_MULTIWALKER:
         alliance_loss_total.backward()
         self.alliance_optimizer.step()
 
-        # Report average allocated Shapley reward and true reward.
+        # Report average allocated Shapley reward and average true global reward.
         avg_shapley_reward = batch['r_n'].mean(dim=(0, 1)).detach().cpu().numpy()
         avg_true_reward = true_rewards.mean(dim=(0, 1)).detach().cpu().numpy()
 
