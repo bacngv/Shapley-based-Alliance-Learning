@@ -1,4 +1,4 @@
-# MAPPO in MPE environment
+# MAPPO in MULTIWALKER environment
 
 ## How to use my code?  
 You can dircetly run 'MAPPO_MULTIWALKER_main.py' in your own IDE.<br />

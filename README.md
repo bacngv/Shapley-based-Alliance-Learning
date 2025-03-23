@@ -16,13 +16,17 @@ gym==0.10.5<br />
 ## 1. MAPPO in MPE (discrete action space)
 ![image](https://github.com/Lizhi-sjtu/MARL-code-pytorch/blob/main/1.MAPPO_MPE/MAPPO_MPE_training_result.png)
 
-## 2. MAPPO in  StarCraft II(SMAC)
+## 2. MAPPO in MULTIWALKER (continuous action space)
+![image](MAPPO_MULTIWALKER/data_train/MAPPO_env_multiwalker_number_1_seed_0_eval.png)
+<p align="center"> <img src="MAPPO_MULTIWALKER/data_train/multiwalker_steps_3000063.gif" width="300" alt="Battle vs Random Agent" /> </p> <p align="center"> <em>3M Training steps</em> </p>
+
+## 3. MAPPO in  StarCraft II(SMAC)
 ![image](https://github.com/Lizhi-sjtu/MARL-code-pytorch/blob/main/2.MAPPO_SMAC/MAPPO_SMAC_training_result.png)
 
-## 3. QMIX and VDN in StarCraft II(SMAC)
+## 4. QMIX and VDN in StarCraft II(SMAC)
 ![image](https://github.com/Lizhi-sjtu/MARL-code-pytorch/blob/main/3.QMIX_VDN_SMAC/QMIX_SMAC_training_result.png)
 
-## 4. MADDPG and MATD3 in MPE (continuous action space)
+## 5. MADDPG and MATD3 in MPE (continuous action space)
 ![image](https://github.com/Lizhi-sjtu/MARL-code-pytorch/blob/main/4.MADDPG_MATD3_MPE/MADDPG_MATD3_training_result.png)
 
 # Some Details

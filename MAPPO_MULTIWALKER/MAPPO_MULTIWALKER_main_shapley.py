@@ -126,9 +126,10 @@ class Runner_MAPPO_MULTIWALKER:
 
         self.save_eval_csv()
         self.plot_eval_rewards()
-        self.plot_shapley_values()
+        
 
         if self.total_steps >= self.next_save_step:
+            self.plot_shapley_values()
             gif_filename = './data_train/{}_steps_{}.gif'.format(self.env_name, self.total_steps)
             self.render_and_save_gif(gif_filename)
             self.next_save_step += 20000
