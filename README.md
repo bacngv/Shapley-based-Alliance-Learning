@@ -14,6 +14,9 @@ Concise pytorch implements of MARL algorithms, including MAPPO, MADDPG, MATD3, Q
 ## 2. MAPPO in MULTIWALKER (continuous action space)
 <p align="center"> <img src="assets/mappo-multiwalker/multiwalker_steps_2000041.gif" width="300" alt="multiwalker" /> <img src="assets/mappo-shapley-multiwalker/multiwalker_steps_2000234.gif" width="300" alt="multiwalker" /> </p> <p align="center"> <em>Left: MAPPO, Right: MAPPO-SBAL</em> </p>
 
+
+If you want to see the learning process during training, please check out [YOUTUBE](https://www.youtube.com/watch?v=erYeBC8ItZQ).
+
 ![image](assets/multiwalker.png)
 
 ## 3. MAPPO in  StarCraft II(SMAC)
