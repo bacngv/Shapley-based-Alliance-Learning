@@ -269,7 +269,7 @@ if __name__ == '__main__':
     parser.add_argument("--epsilon", type=float, default=0.2, help="Clipping parameter for PPO")
     parser.add_argument("--K_epochs", type=int, default=15, help="Number of epochs per update")
     parser.add_argument("--use_adv_norm", type=bool, default=True, help="Use advantage normalization")
-    parser.add_argument("--use_reward_norm", type=bool, default=False, help="Use reward normalization")
+    parser.add_argument("--use_reward_norm", type=bool, default=True, help="Use reward normalization")
     parser.add_argument("--use_reward_scaling", type=bool, default=False, help="Use reward scaling")
     parser.add_argument("--entropy_coef", type=float, default=0.01, help="Policy entropy coefficient")
     parser.add_argument("--use_lr_decay", type=bool, default=True, help="Use learning rate decay")
