@@ -98,11 +98,17 @@ class Critic_MLP(nn.Module):
         value = self.fc3(x)
         return value
 
-# Embedding network
+# ============================
+# Embedding and Alliance Value Networks
+# ============================
+
+# Network for embedding observations
 class PhiNet(nn.Module):
     def __init__(self, obs_dim, embed_dim):
         super(PhiNet, self).__init__()
+        # First layer to map observation to embedding space
         self.fc1 = nn.Linear(obs_dim, embed_dim)
+        # Second layer to refine embedding
         self.fc2 = nn.Linear(embed_dim, embed_dim)
         self.relu = nn.ReLU()
     
@@ -111,7 +117,7 @@ class PhiNet(nn.Module):
         embedding = self.relu(self.fc2(x))
         return embedding
 
-# Alliance value network
+# Network to compute alliance value from a global embedding
 class AllianceValueNet(nn.Module):
     def __init__(self, embed_dim, hidden_dim):
         super(AllianceValueNet, self).__init__()
@@ -124,39 +130,44 @@ class AllianceValueNet(nn.Module):
         alliance_value = self.fc2(x)
         return alliance_value
 
-# Compute Shapley values using Monte Carlo approximation
+# ============================
+# Functions for Shapley Value and Reward Allocation
+# ============================
+
+# Compute Shapley values for each agent using vectorized Monte Carlo sampling
 def compute_shapley_values(obs_all, phi_net, alliance_net, num_samples=50):
     """
+    Compute Shapley values for N agents using vectorized Monte Carlo on GPU.
     Args:
-        obs_all (torch.Tensor): shape (N, obs_dim) of agents' observations.
-        phi_net (nn.Module): network mapping observations to embeddings.
-        alliance_net (nn.Module): network predicting coalition value from embedding.
-        num_samples (int): number of Monte Carlo samples.
-    
+        obs_all (torch.Tensor): Tensor of shape (N, obs_dim) for N agents.
+        phi_net (nn.Module): Network mapping observations to embeddings.
+        alliance_net (nn.Module): Network predicting alliance value.
+        num_samples (int): Number of Monte Carlo samples.
     Returns:
-        torch.Tensor: non-negative Shapley values with shape (N,).
+        torch.Tensor: Shapley values for each agent of shape (N,), clamped to non-negative values.
     """
     device = obs_all.device
     N, _ = obs_all.shape
     embed_dim = phi_net.fc2.out_features
 
+    # Compute embeddings for all agents
     embeddings = phi_net(obs_all)  # (N, embed_dim)
-
-    # Generate random permutations of agent indices
+    # Generate random values and obtain random permutations
     random_vals = torch.rand(num_samples, N, device=device)
     perms = random_vals.argsort(dim=1)
-
     perms_embeddings = embeddings[perms]
+    # Compute cumulative sum of embeddings over the permutation order
     cum_embeddings = perms_embeddings.cumsum(dim=1)
 
+    # Evaluate alliance network on empty coalition (value = 0) and on cumulative embeddings
     zero_coalition = torch.zeros(num_samples, 1, embed_dim, device=device)
     zero_val = alliance_net(zero_coalition.view(-1, embed_dim)).view(num_samples, 1)
-
     alliance_vals = alliance_net(cum_embeddings.view(-1, embed_dim)).view(num_samples, N)
     coalition_vals = torch.cat([zero_val, alliance_vals], dim=1)
-
+    # Calculate marginal contributions for each agent
     marginal_contributions = coalition_vals[:, 1:] - coalition_vals[:, :-1]
 
+    # Scatter marginal contributions to corresponding agents using permutation indices
     flat_indices = perms.reshape(-1)
     flat_marginals = marginal_contributions.reshape(-1)
 
@@ -166,67 +177,94 @@ def compute_shapley_values(obs_all, phi_net, alliance_net, num_samples=50):
 
     return torch.clamp(shapley_values, min=0)
 
-# Allocate rewards based on Shapley values
-def allocate_rewards(global_reward, shapley_values):
-    total_shapley = torch.sum(shapley_values)
-    if total_shapley.item() > 0:
-        allocation = global_reward * (shapley_values / total_shapley)
-    else:
-        allocation = torch.ones_like(shapley_values) * (global_reward / shapley_values.shape[0])
-    return allocation
-
-# Compute alliance loss for phi_net and alliance_net
-def compute_alliance_loss(phi_net, alliance_net, obs_all, num_permutations=5):
+# Allocate global reward to each agent based on Shapley values and equal share
+def allocate_rewards(global_reward, shapley_values, alpha=0.8):
     """
+    Allocate the global_reward to each agent based on the formula:
+    r_i = alpha * r_shapley,i + (1 - alpha) * (r_global / N)
+    
     Args:
-        phi_net (nn.Module): network mapping observations to embeddings.
-        alliance_net (nn.Module): network evaluating coalition value.
-        obs_all (torch.Tensor): shape (N, obs_dim) for N agents.
-        num_permutations (int): number of permutations to average the ordering loss.
-        
+        global_reward (scalar): The overall reward for the system.
+        shapley_values (torch.Tensor): Tensor containing each agent's Shapley value (shape (N,)).
+        alpha (float): Weight balancing between Shapley reward and equal division.
+    
     Returns:
-        torch.Tensor: total loss.
+        torch.Tensor: Allocated reward for each agent.
+    """
+    N = shapley_values.shape[0]
+    equal_reward = global_reward / N
+    allocated = alpha * shapley_values + (1 - alpha) * equal_reward
+    return allocated
+
+# Compute loss for the alliance networks including empty coalition and synergy losses
+def compute_alliance_loss(phi_net, alliance_net, obs_all, num_permutations=5, num_synergy_samples=8):
+    """
+    Compute the loss for phi_net and alliance_net with two components:
+    1. f(empty) = 0.
+    2. Synergy loss for disjoint sets X and Y: encourages f(X ∪ Y) >= f(X) + f(Y).
+       Note: Here, X and Y are ensured to be disjoint.
+    
+    Args:
+        phi_net (nn.Module): Network mapping observations to embeddings.
+        alliance_net (nn.Module): Network that computes the alliance value.
+        obs_all (torch.Tensor): Tensor with shape (N, obs_dim) for N agents.
+        num_permutations (int): Number of permutations used for order loss.
+        num_synergy_samples (int): Number of samples for synergy loss.
+    
+    Returns:
+        torch.Tensor: Combined loss value.
     """
     device = obs_all.device
     N = obs_all.shape[0]
     embed_dim = phi_net.fc2.out_features
 
-    # Loss for empty coalition: f(empty)=0
+    # 1. Loss for the empty coalition (should be 0)
     empty_embedding = torch.zeros(1, embed_dim, device=device)
     f_empty = alliance_net(empty_embedding)
     loss_empty = (f_empty ** 2).mean()
+
+    # 2. Synergy loss: for disjoint sets X and Y
+    # Compute embeddings for all agents
+    embeddings = phi_net(obs_all)  # shape: (N, embed_dim)
     
-    # Ordering loss: ensure full coalition value equals sum of marginal contributions
-    total_embedding = phi_net(obs_all).sum(dim=0, keepdim=True)
-    f_total = alliance_net(total_embedding)
-    loss_order = 0.0
-    for _ in range(num_permutations):
-        perm = torch.randperm(N, device=device)
-        cumulative = torch.zeros(1, embed_dim, device=device)
-        f_values = []
-        for idx in perm:
-            emb = phi_net(obs_all[idx].unsqueeze(0))
-            cumulative = cumulative + emb
-            f_val = alliance_net(cumulative)
-            f_values.append(f_val)
-        f_perm_total = f_values[-1]
-        loss_order += (f_total - f_perm_total).pow(2).mean()
-    loss_order = loss_order / num_permutations
-    
-    # Additivity loss: f(X) + f(Y) ≈ f(X U Y)
-    perm = torch.randperm(N, device=device)
-    split = N // 2
-    X_indices = perm[:split]
-    Y_indices = perm[split:]
-    f_X = alliance_net(phi_net(obs_all[X_indices]).sum(dim=0, keepdim=True))
-    f_Y = alliance_net(phi_net(obs_all[Y_indices]).sum(dim=0, keepdim=True))
-    f_XY = alliance_net(phi_net(obs_all).sum(dim=0, keepdim=True))
-    loss_add = (f_X + f_Y - f_XY).pow(2).mean()
-    
+    # Generate random masks for set X with probability 0.5 for each agent
+    mask_X = (torch.rand(num_synergy_samples, N, device=device) > 0.5)
+    # Ensure X is neither empty nor contains all agents
+    for i in range(num_synergy_samples):
+        if mask_X[i].sum() == 0:
+            mask_X[i, 0] = True
+        if mask_X[i].sum() == N:
+            mask_X[i, 0] = False
+
+    # Generate random masks for set Y from the complement of X (ensuring disjoint sets)
+    mask_Y = (torch.rand(num_synergy_samples, N, device=device) > 0.5) & (~mask_X)
+    # Ensure Y is not empty: if empty, choose one element from the complement of X
+    for i in range(num_synergy_samples):
+        if mask_Y[i].sum() == 0:
+            complement = ~mask_X[i]
+            idx = complement.nonzero(as_tuple=False)[0, 0]
+            mask_Y[i, idx] = True
+
+    # Compute the sum of embeddings for sets X, Y, and their union
+    sum_X = torch.matmul(mask_X.float(), embeddings)         # (num_synergy_samples, embed_dim)
+    sum_Y = torch.matmul(mask_Y.float(), embeddings)           # (num_synergy_samples, embed_dim)
+    mask_union = mask_X | mask_Y
+    sum_union = torch.matmul(mask_union.float(), embeddings)   # (num_synergy_samples, embed_dim)
+
+    # Compute alliance values for the sets
+    f_X = alliance_net(sum_X)      # (num_synergy_samples, 1)
+    f_Y = alliance_net(sum_Y)      # (num_synergy_samples, 1)
+    f_union = alliance_net(sum_union)  # (num_synergy_samples, 1)
+
+    # Penalize if f(X) + f(Y) exceeds f(X ∪ Y)
+    synergy_violation = torch.relu(f_X + f_Y - f_union)
+    loss_synergy = synergy_violation.pow(2).mean()
+
+    # Combine losses with weighting factors (adjustable)
     lambda_empty = 1.0
-    lambda_order = 1.0
-    lambda_add = 1.0
-    loss = lambda_empty * loss_empty + lambda_order * loss_order + lambda_add * loss_add
+    lambda_synergy = 1.0
+    loss = lambda_empty * loss_empty + lambda_synergy * loss_synergy
+
     return loss
 
 # MAPPO_MPE class integrating Shapley rewards and alliance loss
