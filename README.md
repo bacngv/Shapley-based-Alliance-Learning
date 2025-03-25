@@ -9,7 +9,7 @@ Concise pytorch implements of MARL algorithms, including MAPPO, MADDPG, MATD3, Q
 
 # Trainning results
 ## 1. MAPPO in MPE (discrete action space)
-![image](https://github.com/Lizhi-sjtu/MARL-code-pytorch/blob/main/1.MAPPO_MPE/MAPPO_MPE_training_result.png)
+![image](assets/spread.png)
 
 ## 2. MAPPO in MULTIWALKER (continuous action space)
 <p align="center"> <img src="assets/mappo-multiwalker/multiwalker_steps_2000041.gif" width="300" alt="multiwalker" /> <img src="assets/mappo-shapley-multiwalker/multiwalker_steps_2000234.gif" width="300" alt="multiwalker" /> </p> <p align="center"> <em>Left: MAPPO, Right: MAPPO-SBAL</em> </p>
@@ -20,7 +20,7 @@ If you want to see the learning process during training, please check out [YOUTU
 ![image](assets/multiwalker.png)
 
 ## 3. MAPPO in  StarCraft II(SMAC)
-![image](https://github.com/Lizhi-sjtu/MARL-code-pytorch/blob/main/2.MAPPO_SMAC/MAPPO_SMAC_training_result.png)
+![image](assets/smac_3m.png)
 
 ## 4. QMIX and VDN in StarCraft II(SMAC)
 ![image](https://github.com/Lizhi-sjtu/MARL-code-pytorch/blob/main/3.QMIX_VDN_SMAC/QMIX_SMAC_training_result.png)
