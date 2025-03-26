@@ -3,6 +3,7 @@ Concise pytorch implements of MARL algorithms, including MAPPO, MADDPG, MATD3, Q
 - Check out the [PIPELINE](https://colab.research.google.com/drive/1Ffmd-AXx6NehiddVK5NIgQOGM5MJE4Qt) to run mappo on MPE.
 - Check out the [PIPELINE](https://colab.research.google.com/drive/1f8Aa8KTXwHayQgXitOxrx0ODThNpMpxS) to run mappo on SMAC.
 - Check out the [PIPELINE](https://colab.research.google.com/drive/1kBkdh8z7fFi_YG96nyfVYGwwGJMd_65Y) to run mappo on MULTIWALKER (PettingZoo[sisl]).
+- Check out the [PIPELINE](https://colab.research.google.com/drive/1iwUXTvtUi1mj5z-9MvOpylY8yJfUNmHH) to run mappo on 'Knights Archers Zombies' (PettingZoo[butterfly]).
 # Requirements
 [Multi-Agent Particle-World Environment(MPE)](https://github.com/openai/multiagent-particle-envs)<br />
 [SMAC-StarCraft Multi-Agent Challenge](https://github.com/oxwhirl/smac)<br />
