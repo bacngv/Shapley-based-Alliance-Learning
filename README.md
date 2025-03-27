@@ -20,12 +20,21 @@ If you want to see the learning process during training, please check out [YOUTU
 
 ![image](assets/multiwalker.png)
 
-## 3. MAPPO in  StarCraft II(SMAC)
+## 3. MAPPO in Knights Archers Zombies (discrete action space)
+In this experiment, I used an environment where agents have different tasks to test performance while Shapley rewards are distributed during training. I computed the average every 20k training steps.
+
+Note that: KAZ consists of 4 agents in the following order: archer 0, archer 1, knight 0, knight 1, and they are redistributed using Shapley in the order: agent 1, agent 2, agent 3, agent 4.
+![image](assets/KAZ_seed_0_shapley.png)
+
+Comparison with the original MAPPO.
+![image](assets/kaz.png)
+
+## 4. MAPPO in  StarCraft II(SMAC)
 ![image](assets/smac_3m.png)
 
-## 4. QMIX and VDN in StarCraft II(SMAC)
+## 5. QMIX and VDN in StarCraft II(SMAC)
 ![image](https://github.com/Lizhi-sjtu/MARL-code-pytorch/blob/main/3.QMIX_VDN_SMAC/QMIX_SMAC_training_result.png)
 
-## 5. MADDPG and MATD3 in MPE (continuous action space)
+## 6. MADDPG and MATD3 in MPE (continuous action space)
 ![image](https://github.com/Lizhi-sjtu/MARL-code-pytorch/blob/main/4.MADDPG_MATD3_MPE/MADDPG_MATD3_training_result.png)
 
