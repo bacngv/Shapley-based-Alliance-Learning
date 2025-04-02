@@ -7,7 +7,7 @@ from torch.utils.tensorboard import SummaryWriter
 import argparse
 from normalization import Normalization, RewardScaling
 from replay_buffer import ReplayBuffer
-from mappo_mpe_shapley import MAPPO_MPE
+from mappo_mpe_owen import MAPPO_MPE 
 from make_env import make_env
 import os
 from IPython import display as ipy_display  # For live plotting in Colab
@@ -59,9 +59,9 @@ class Runner_MAPPO_MPE:
         self.eval_steps = []        
         self.total_steps = 0
 
-        # Lists to store averaged Shapley rewards for each agent
-        self.shapley_rewards = []      
-        self.shapley_eval_steps = []   
+        # Lists to store averaged Owen rewards for each agent
+        self.owen_rewards = []      
+        self.owen_eval_steps = []   
 
         # Create folder to save training data if it doesn't exist
         os.makedirs('./data_train', exist_ok=True)
@@ -77,14 +77,14 @@ class Runner_MAPPO_MPE:
         self.ax.legend(loc='lower right')
         self.fig.show()
 
-        # Set up live plot for Shapley rewards per agent
-        self.fig_shapley, self.ax_shapley = plt.subplots(figsize=(8, 6))
-        self.lines_shapley = []  # One line per agent
-        self.ax_shapley.set_xlabel('Training Steps')
-        self.ax_shapley.set_ylabel('Shapley Reward')
-        self.ax_shapley.set_title(env_title)
-        self.ax_shapley.legend(loc='lower right')
-        self.fig_shapley.show()
+        # Set up live plot for Owen rewards per agent
+        self.fig_owen, self.ax_owen = plt.subplots(figsize=(8, 6))
+        self.lines_owen = []  # One line per agent
+        self.ax_owen.set_xlabel('Training Steps')
+        self.ax_owen.set_ylabel('Owen Reward')
+        self.ax_owen.set_title(env_title)
+        self.ax_owen.legend(loc='lower right')
+        self.fig_owen.show()
 
         # Initialize reward normalization or scaling if enabled
         if self.args.use_reward_norm:
@@ -96,7 +96,7 @@ class Runner_MAPPO_MPE:
 
     def run(self):
         evaluate_num = -1  # Number of evaluations performed
-        shapley_rewards_temp = []  # Temporary list to store Shapley rewards per training interval
+        owen_rewards_temp = []  # Temporary list to store Owen rewards per training interval
         last_interval = 0         # Training step count at the last update
 
         while self.total_steps < self.args.max_train_steps:
@@ -109,21 +109,21 @@ class Runner_MAPPO_MPE:
 
             # Train the agent once the replay buffer is full
             if self.replay_buffer.episode_num == self.args.batch_size:
-                # Train and get average Shapley rewards for each agent
-                avg_shapley_reward, _ = self.agent_n.train(self.replay_buffer, self.total_steps)
+                # Train and get average Owen rewards for each agent
+                avg_owen_reward, _ = self.agent_n.train(self.replay_buffer, self.total_steps)
                 self.replay_buffer.reset_buffer()
 
-                shapley_rewards_temp.append(avg_shapley_reward)
+                owen_rewards_temp.append(avg_owen_reward)
 
-                # Compute average Shapley rewards every 20k steps
+                # Compute average Owen rewards every 20k steps
                 if self.total_steps - last_interval >= 20000:
-                    rewards_array = np.array(shapley_rewards_temp)  # shape: [num_train, N]
-                    avg_20k = np.mean(rewards_array, axis=0)          # shape: [N]
-                    self.shapley_eval_steps.append(self.total_steps)
-                    self.shapley_rewards.append(avg_20k)
-                    self.plot_shapley_rewards()
+                    rewards_array = np.array(owen_rewards_temp)  # shape: [num_train, N]
+                    avg_20k = np.mean(rewards_array, axis=0)         # shape: [N]
+                    self.owen_eval_steps.append(self.total_steps)
+                    self.owen_rewards.append(avg_20k)
+                    self.plot_owen_rewards()
 
-                    shapley_rewards_temp = []
+                    owen_rewards_temp = []
                     last_interval = self.total_steps
 
         self.evaluate_policy()  # Final evaluation
@@ -187,22 +187,22 @@ class Runner_MAPPO_MPE:
         self.fig.savefig('./data_train/MAPPO_env_{}_number_{}_seed_{}_eval.png'.format(
             self.env_name, self.number, self.seed))
 
-    def plot_shapley_rewards(self):
+    def plot_owen_rewards(self):
         # Initialize lines for each agent if not already created
-        if not self.lines_shapley:
+        if not self.lines_owen:
             for agent in range(self.args.N):
-                line, = self.ax_shapley.plot([], [], label=f'Agent {agent+1}')
-                self.lines_shapley.append(line)
-            self.ax_shapley.legend(loc='lower right')
+                line, = self.ax_owen.plot([], [], label=f'Agent {agent+1}')
+                self.lines_owen.append(line)
+            self.ax_owen.legend(loc='lower right')
 
-        # Update each agent's Shapley reward data
-        for agent, line in enumerate(self.lines_shapley):
-            rewards_agent = [reward[agent] for reward in self.shapley_rewards]
-            line.set_xdata(self.shapley_eval_steps)
+        # Update each agent's Owen reward data
+        for agent, line in enumerate(self.lines_owen):
+            rewards_agent = [reward[agent] for reward in self.owen_rewards]
+            line.set_xdata(self.owen_eval_steps)
             line.set_ydata(rewards_agent)
 
-        self.ax_shapley.relim()
-        self.ax_shapley.autoscale_view()
+        self.ax_owen.relim()
+        self.ax_owen.autoscale_view()
 
         # Format x-axis labels dynamically
         def dynamic_formatter(x, pos):
@@ -212,12 +212,12 @@ class Runner_MAPPO_MPE:
                 return f'{x/1e3:.1f}K'
             else:
                 return f'{int(x)}'
-        self.ax_shapley.xaxis.set_major_formatter(FuncFormatter(dynamic_formatter))
+        self.ax_owen.xaxis.set_major_formatter(FuncFormatter(dynamic_formatter))
 
-        self.fig_shapley.canvas.draw()
-        self.fig_shapley.canvas.flush_events()
+        self.fig_owen.canvas.draw()
+        self.fig_owen.canvas.flush_events()
 
-        self.fig_shapley.savefig('./data_train/MAPPO_env_{}_number_{}_seed_{}_shapley.png'.format(
+        self.fig_owen.savefig('./data_train/MAPPO_env_{}_number_{}_seed_{}_owen.png'.format(
             self.env_name, self.number, self.seed))
 
     def run_episode_mpe(self, evaluate=False):

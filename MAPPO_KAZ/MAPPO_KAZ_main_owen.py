@@ -11,7 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 import argparse
 from normalization import Normalization, RewardScaling
 from replay_buffer import ReplayBuffer
-from mappo_kaz_shapley import MAPPO_KAZ  
+from mappo_kaz_owen import MAPPO_KAZ  
 from kaz import KAZGymWrapper 
 import imageio  # Library to save GIFs
 from IPython import display as ipy_display  # To display GIFs in a notebook
@@ -54,10 +54,10 @@ class Runner_KAZ:
         self.eval_steps = []
         self.total_steps = 0
 
-        # Variables for storing Shapley rewards
-        self.shapley_rewards = []       # Stores the average Shapley rewards per interval (each interval is 20K steps)
-        self.shapley_eval_steps = []    # Stores the corresponding steps for the Shapley values
-        self.lines_shapley = []         # Used to plot individual lines for each agent
+        # Variables for storing Owen rewards
+        self.owen_rewards = []       # Stores the average Owen rewards per interval (each interval is 20K steps)
+        self.owen_eval_steps = []    # Stores the corresponding steps for the Owen values
+        self.lines_owen = []         # Used to plot individual lines for each agent
 
         # Create folder to save data if it doesn't exist
         os.makedirs('./data_train', exist_ok=True)
@@ -72,13 +72,13 @@ class Runner_KAZ:
         self.ax.legend(loc='lower right')
         self.fig.show()
 
-        # Initialize live plot for Shapley rewards (lines will be created when data is available)
-        self.fig_shapley, self.ax_shapley = plt.subplots(figsize=(8,6))
-        self.ax_shapley.set_xlabel('Training Steps')
-        self.ax_shapley.set_ylabel('Shapley Reward')
-        self.ax_shapley.set_title('Shapley Rewards - KAZ')
-        self.ax_shapley.legend(loc='lower right')
-        self.fig_shapley.show()
+        # Initialize live plot for Owen rewards (lines will be created when data is available)
+        self.fig_owen, self.ax_owen = plt.subplots(figsize=(8,6))
+        self.ax_owen.set_xlabel('Training Steps')
+        self.ax_owen.set_ylabel('Owen Reward')
+        self.ax_owen.set_title('Owen Rewards - KAZ')
+        self.ax_owen.legend(loc='lower right')
+        self.fig_owen.show()
 
         # Use reward normalization/scaling if required
         if self.args.use_reward_norm:
@@ -93,8 +93,8 @@ class Runner_KAZ:
 
     def run(self):
         evaluate_num = -1  # Number of evaluations performed
-        shapley_rewards_temp = []  # Temporarily store Shapley values after each training cycle
-        last_interval = 0         # Last step at which Shapley values were updated
+        owen_rewards_temp = []  # Temporarily store Owen values after each training cycle
+        last_interval = 0         # Last step at which Owen values were updated
 
         while self.total_steps < self.args.max_train_steps:
             if self.total_steps // self.args.evaluate_freq > evaluate_num:
@@ -105,22 +105,22 @@ class Runner_KAZ:
             self.total_steps += episode_steps
 
             if self.replay_buffer.episode_num == self.args.batch_size:
-                # Train the agent and obtain the Shapley value 
-                avg_shapley_reward, _ = self.agent.train(self.replay_buffer, self.total_steps)
+                # Train the agent and obtain the Owen value 
+                avg_owen_reward, _ = self.agent.train(self.replay_buffer, self.total_steps)
                 self.replay_buffer.reset_buffer()
                 
-                # Save temporary Shapley reward
-                shapley_rewards_temp.append(avg_shapley_reward)
+                # Save temporary Owen reward
+                owen_rewards_temp.append(avg_owen_reward)
                 
-                # Update and plot Shapley rewards every 20000 steps
+                # Update and plot Owen rewards every 20000 steps
                 if self.total_steps - last_interval >= 20000:
-                    rewards_array = np.array(shapley_rewards_temp)  # Array shape: (num_train, N)
-                    avg_20k = np.mean(rewards_array, axis=0)          # Average for each agent, shape: (N,)
-                    self.shapley_eval_steps.append(self.total_steps)
-                    self.shapley_rewards.append(avg_20k)
-                    self.plot_shapley_rewards()
+                    rewards_array = np.array(owen_rewards_temp)  # Array shape: (num_train, N)
+                    avg_20k = np.mean(rewards_array, axis=0)         # Average for each agent, shape: (N,)
+                    self.owen_eval_steps.append(self.total_steps)
+                    self.owen_rewards.append(avg_20k)
+                    self.plot_owen_rewards()
                     
-                    shapley_rewards_temp = []
+                    owen_rewards_temp = []
                     last_interval = self.total_steps
 
         self.evaluate_policy()  # Final evaluation
@@ -179,25 +179,25 @@ class Runner_KAZ:
         self.ax.xaxis.set_major_formatter(FuncFormatter(dynamic_formatter))
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
-        #save
+        # Save the plot
         self.fig.savefig('./data_train/KAZ_seed_{}_eval.png'.format(self.seed))
 
-    def plot_shapley_rewards(self):
+    def plot_owen_rewards(self):
         # Initialize lines for each agent if not already created
-        if not self.lines_shapley:
+        if not self.lines_owen:
             for agent in range(self.args.N):
-                line, = self.ax_shapley.plot([], [], label=f'Agent {agent+1}')
-                self.lines_shapley.append(line)
-            self.ax_shapley.legend(loc='lower right')
+                line, = self.ax_owen.plot([], [], label=f'Agent {agent+1}')
+                self.lines_owen.append(line)
+            self.ax_owen.legend(loc='lower right')
         
         # Update data for each agent
-        for agent, line in enumerate(self.lines_shapley):
-            rewards_agent = [reward[agent] for reward in self.shapley_rewards]
-            line.set_xdata(self.shapley_eval_steps)
+        for agent, line in enumerate(self.lines_owen):
+            rewards_agent = [reward[agent] for reward in self.owen_rewards]
+            line.set_xdata(self.owen_eval_steps)
             line.set_ydata(rewards_agent)
         
-        self.ax_shapley.relim()
-        self.ax_shapley.autoscale_view()
+        self.ax_owen.relim()
+        self.ax_owen.autoscale_view()
 
         def dynamic_formatter(x, pos):
             if x >= 1e6:
@@ -206,13 +206,12 @@ class Runner_KAZ:
                 return f'{x/1e3:.1f}K'
             else:
                 return f'{int(x)}'
-        self.ax_shapley.xaxis.set_major_formatter(FuncFormatter(dynamic_formatter))
+        self.ax_owen.xaxis.set_major_formatter(FuncFormatter(dynamic_formatter))
 
-        self.fig_shapley.canvas.draw()
-        self.fig_shapley.canvas.flush_events()
-        #save
-        self.fig_shapley.savefig('./data_train/KAZ_seed_{}_shapley.png'.format(self.seed))
-
+        self.fig_owen.canvas.draw()
+        self.fig_owen.canvas.flush_events()
+        # Save the plot
+        self.fig_owen.savefig('./data_train/KAZ_seed_{}_owen.png'.format(self.seed))
 
     def render_and_save_gif(self, filename='KAZ.gif'):
         frames = []
