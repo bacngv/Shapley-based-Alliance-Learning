@@ -383,17 +383,17 @@ class MAPPO_SMAC:
     def train(self, replay_buffer, total_steps):
         batch = replay_buffer.get_training_data()
         max_episode_len = replay_buffer.max_episode_len
-        true_rewards = batch['r_n'].clone()
+        true_rewards = batch['r'].clone()
 
         coalition_ids = self.coalition_ids
 
-        for i in range(batch['r_n'].shape[0]):
-            for t in range(batch['r_n'].shape[1]):
-                global_reward = torch.sum(batch['r_n'][i, t])
+        for i in range(batch['r'].shape[0]):
+            for t in range(batch['r'].shape[1]):
+                global_reward = torch.sum(batch['r'][i, t])
                 obs_all = batch['obs_n'][i, t]
                 owen_vals = compute_owen_values(obs_all, self.phi_net, self.alliance_net, coalition_ids, num_samples=50)
                 allocated = allocate_rewards_owen(global_reward, owen_vals)
-                batch['r_n'][i, t] = allocated
+                batch['r'][i, t] = allocated
 
 
         # Compute advantages using Generalized Advantage Estimation (GAE)
@@ -468,7 +468,7 @@ class MAPPO_SMAC:
         for i in range(batch['obs_n'].shape[0]):
             t = torch.randint(low=0, high=batch['obs_n'].shape[1], size=(1,)).item()
             obs_all = batch['obs_n'][i, t]
-            alliance_loss_total += compute_alliance_loss(self.phi_net, self.alliance_net, obs_all, num_permutations=5)
+            alliance_loss_total += compute_alliance_loss(self.phi_net, self.alliance_net, obs_all, num_permutations=15)
             count += 1
         alliance_loss_total = alliance_loss_total / count
 
@@ -476,7 +476,7 @@ class MAPPO_SMAC:
         alliance_loss_total.backward()
         self.alliance_optimizer.step()
 
-        avg_owen_reward = batch['r_n'].mean(dim=(0, 1)).detach().cpu().numpy()
+        avg_owen_reward = batch['r'].mean(dim=(0, 1)).detach().cpu().numpy()
         avg_true_reward = true_rewards.mean(dim=(0, 1)).detach().cpu().numpy()
 
         return avg_owen_reward, avg_true_reward
