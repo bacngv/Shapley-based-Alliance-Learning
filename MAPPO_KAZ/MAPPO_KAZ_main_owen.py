@@ -37,7 +37,6 @@ class Runner_KAZ:
         self.args.action_dim = self.env.action_space[agent0].n
         # Global state is the concatenation of all agents' observations (assuming each agent has the same obs_dim)
         self.args.state_dim = self.args.N * self.args.obs_dim
-        self.coalition_ids = args.coalition_ids
         
         print("Agents =", self.env.agents)
         print("observation_space =", self.env.observation_space)

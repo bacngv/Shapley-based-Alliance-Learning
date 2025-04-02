@@ -41,7 +41,6 @@ class Runner_MAPPO_MULTIWALKER:
         self.args.obs_dim = self.args.obs_dim_n[0]
         self.args.action_dim = self.args.action_dim_n[0]
         self.args.state_dim = self.args.obs_dim * 3
-        self.coalition_ids = args.coalition_ids
 
         print("observation_space=", self.env.observation_space)
         print("obs_dim_n={}".format(self.args.obs_dim_n))

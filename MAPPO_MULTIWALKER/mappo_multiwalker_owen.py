@@ -388,6 +388,7 @@ class MAPPO_MULTIWALKER:
             list(self.phi_net.parameters()) + list(self.alliance_net.parameters()),
             lr=self.lr
         )
+        self.coalition_ids = args.coalition_ids
 
     # Function to choose an action given a dictionary of observations from each agent
     def choose_action(self, obs_n, evaluate):

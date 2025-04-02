@@ -32,7 +32,6 @@ class Runner_MAPPO_SMAC:
         self.args.state_dim = self.env_info["state_shape"]
         self.args.action_dim = self.env_info["n_actions"]
         self.args.episode_limit = self.env_info["episode_limit"]
-        self.coalition_ids = args.coalition_ids
 
         print("number of agents={}".format(self.args.N))
         print("obs_dim={}".format(self.args.obs_dim))

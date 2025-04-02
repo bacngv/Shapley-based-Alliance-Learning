@@ -348,6 +348,7 @@ class MAPPO_KAZ:
             list(self.phi_net.parameters()) + list(self.alliance_net.parameters()),
             lr=self.lr
         )
+        self.coalition_ids = args.coalition_ids
 
     def choose_action(self, obs_n, evaluate):
         with torch.no_grad():

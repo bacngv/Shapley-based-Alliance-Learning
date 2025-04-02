@@ -19,7 +19,6 @@ class Runner_MAPPO_MPE:
         self.env_name = env_name
         self.number = number
         self.seed = seed
-        self.coalition_ids = args.coalition_ids
 
         # Set random seed for reproducibility
         np.random.seed(self.seed)
