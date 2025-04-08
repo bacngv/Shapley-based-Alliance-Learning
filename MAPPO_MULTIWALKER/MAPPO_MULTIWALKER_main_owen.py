@@ -29,7 +29,7 @@ class Runner_MAPPO_MULTIWALKER:
         sns.set_theme(style="whitegrid", font_scale=1.2)
         discrete = False
 
-        # Create multiwalker environment with 3 agents
+        # Create MultiWalker environment with 3 agents
         self.env = GymMultiWalkerWrapper(n_walkers=3, terrain_length=500, max_cycles=args.max_cycles)
         self.args.N = 3  
         self.args.obs_dim_n = [self.env.observation_space.shape[0] for _ in range(3)]
@@ -57,9 +57,10 @@ class Runner_MAPPO_MULTIWALKER:
         self.eval_steps = []
         self.total_steps = 0
 
-        # Storage for Owen rewards (for each agent)
-        self.owen_rewards = []      
-        self.owen_eval_steps = []   
+        # Store rewards for each agent and the baseline reward (baseline = mean(true_reward)*0.2)
+        self.owen_rewards = []              
+        self.owen_baseline_rewards = []     
+        self.owen_eval_steps = []           
 
         self.next_save_step = 20000
         os.makedirs('./data_train', exist_ok=True)
@@ -75,24 +76,27 @@ class Runner_MAPPO_MULTIWALKER:
         self.ax.legend(loc='lower right')
         self.fig.show()
 
-        # Setup live plot for Owen rewards for each agent
+        # Setup live plot for agent rewards vs baseline reward
         self.fig_owen, self.ax_owen = plt.subplots(figsize=(8, 6))
         self.lines_owen = []
+        self.line_baseline = None  
         self.ax_owen.set_xlabel('Training Steps')
-        self.ax_owen.set_ylabel('Owen Reward')
-        self.ax_owen.set_title(env_title)
+        self.ax_owen.set_ylabel('Reward')
+        self.ax_owen.set_title(env_title + " - Agent vs Baseline Reward")
+        self.ax_owen.legend(loc='lower right')
         self.fig_owen.show()
 
         if self.args.use_reward_norm:
-            print("------use reward normalization------")
+            print("------ Using reward normalization ------")
             self.reward_norm = Normalization(shape=self.args.N)
         elif self.args.use_reward_scaling:
-            print("------use reward scaling------")
+            print("------ Using reward scaling ------")
             self.reward_scaling = RewardScaling(shape=self.args.N, gamma=self.args.gamma)
 
     def run(self):
         evaluate_num = -1
-        owen_rewards_temp = []
+        owen_rewards_temp = []    # Temporary storage for average agent rewards per training batch
+        owen_baseline_temp = []   # Temporary storage for baseline reward (mean(true_reward)*0.2)
         last_interval = 0
 
         while self.total_steps < self.args.max_train_steps:
@@ -104,19 +108,27 @@ class Runner_MAPPO_MULTIWALKER:
             self.total_steps += episode_steps
 
             if self.replay_buffer.episode_num == self.args.batch_size:
-                avg_owen_reward, _ = self.agent_n.train(self.replay_buffer, self.total_steps)
+                # Train and get (avg_agent_reward, true_reward)
+                avg_owen_reward, true_reward = self.agent_n.train(self.replay_buffer, self.total_steps)
                 self.replay_buffer.reset_buffer()
 
                 owen_rewards_temp.append(avg_owen_reward)
+                owen_baseline_temp.append(np.mean(true_reward) * 0.2)
 
                 if self.total_steps - last_interval >= 20000:
-                    rewards_array = np.array(owen_rewards_temp)
+                    rewards_array = np.array(owen_rewards_temp)    # shape: [num_train, N]
                     avg_20k = np.mean(rewards_array, axis=0)
                     self.owen_eval_steps.append(self.total_steps)
                     self.owen_rewards.append(avg_20k)
+
+                    avg_baseline_20k = np.mean(owen_baseline_temp)
+                    self.owen_baseline_rewards.append(avg_baseline_20k)
+
                     self.plot_owen_rewards()
+                    self.save_owen_csv()
 
                     owen_rewards_temp = []
+                    owen_baseline_temp = []
                     last_interval = self.total_steps
 
         self.evaluate_policy()
@@ -157,6 +169,17 @@ class Runner_MAPPO_MULTIWALKER:
             for step, reward in zip(self.eval_steps, self.evaluate_rewards):
                 writer.writerow([step, reward])
 
+    def save_owen_csv(self):
+        csv_filename = './data_train/MAPPO_env_{}_number_{}_seed_{}_owen.csv'.format(
+            self.env_name, self.number, self.seed)
+        with open(csv_filename, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            header = ['Training Steps'] + [f'Agent {i+1} Reward' for i in range(self.args.N)] + ['Baseline Reward']
+            writer.writerow(header)
+            for step, owen_reward, baseline in zip(self.owen_eval_steps, self.owen_rewards, self.owen_baseline_rewards):
+                row = [step] + list(owen_reward) + [baseline]
+                writer.writerow(row)
+
     def plot_eval_rewards(self):
         self.line.set_xdata(self.eval_steps)
         self.line.set_ydata(self.evaluate_rewards)
@@ -178,18 +201,25 @@ class Runner_MAPPO_MULTIWALKER:
         self.fig.savefig('./data_train/MAPPO_env_{}_number_{}_seed_{}_eval.png'.format(
             self.env_name, self.number, self.seed))
 
-
     def plot_owen_rewards(self):
+        # Initialize a line for each agent if not already created
         if not self.lines_owen:
             for agent in range(self.args.N):
-                line, = self.ax_owen.plot([], [], label=f'Agent {agent+1}')
+                line, = self.ax_owen.plot([], [], label=f'Agent {agent+1} Reward')
                 self.lines_owen.append(line)
+            if self.line_baseline is None:
+                self.line_baseline, = self.ax_owen.plot([], [], label='Baseline Reward', color='black', linestyle='--')
             self.ax_owen.legend(loc='lower right')
 
+        # Update data for each agent
         for agent, line in enumerate(self.lines_owen):
             rewards_agent = [reward[agent] for reward in self.owen_rewards]
             line.set_xdata(self.owen_eval_steps)
             line.set_ydata(rewards_agent)
+
+        # Update baseline reward data
+        self.line_baseline.set_xdata(self.owen_eval_steps)
+        self.line_baseline.set_ydata(self.owen_baseline_rewards)
 
         self.ax_owen.relim()
         self.ax_owen.autoscale_view()
@@ -300,5 +330,8 @@ if __name__ == '__main__':
     parser.add_argument("--coalition_ids", type=int, nargs='+', default=[0, 1, 1],
                         help="List of coalition ids for agents (ex: [0, 1, 1])")
     args = parser.parse_args()
-    runner = Runner_MAPPO_MULTIWALKER(args, env_name="multiwalker", number=1, seed=0)
-    runner.run()
+
+    for seed in range(4):  # Run for seeds 0 to 3
+        print(f"Running with seed: {seed}")
+        runner = Runner_MAPPO_MULTIWALKER(args, env_name="multiwalker", number=seed, seed=seed)
+        runner.run()
