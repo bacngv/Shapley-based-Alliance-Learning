@@ -1,7 +1,7 @@
 import torch 
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns  # For styling plots
+import seaborn as sns
 import csv
 from torch.utils.tensorboard import SummaryWriter
 import argparse
@@ -10,8 +10,8 @@ from replay_buffer import ReplayBuffer
 from mappo_mpe_shapley import MAPPO_MPE
 from make_env import make_env
 import os
-from IPython import display as ipy_display  # For live plotting in Colab
-from matplotlib.ticker import FuncFormatter  # To format x-axis labels
+from IPython import display as ipy_display
+from matplotlib.ticker import FuncFormatter
 
 class Runner_MAPPO_MPE:
     def __init__(self, args, env_name, number, seed):
@@ -27,8 +27,8 @@ class Runner_MAPPO_MPE:
         # Set seaborn style for plots
         sns.set_theme(style="whitegrid", font_scale=1.2)
 
+        # Create environment and set related dimensions
         discrete = True
-        # Create environment
         self.env = make_env(env_name, discrete=discrete)
         self.args.N = self.env.n  # Number of agents
         self.args.obs_dim_n = [self.env.observation_space[i].shape[0] for i in range(self.args.N)]
@@ -53,16 +53,17 @@ class Runner_MAPPO_MPE:
         self.writer = SummaryWriter(log_dir='runs/MAPPO/MAPPO_env_{}_number_{}_seed_{}'.format(
             self.env_name, self.number, self.seed))
 
-        # Lists to store evaluation rewards and training steps
+        # Evaluation and training progress storage
         self.evaluate_rewards = []  
         self.eval_steps = []        
         self.total_steps = 0
 
-        # Lists to store averaged Shapley rewards for each agent
+        # Storage for Shapley rewards and baseline reward
         self.shapley_rewards = []      
         self.shapley_eval_steps = []   
+        self.original_rewards = []  # Baseline reward multiplied by 0.2
 
-        # Create folder to save training data if it doesn't exist
+        # Create folder for training data
         os.makedirs('./data_train', exist_ok=True)
 
         # Set up live plot for evaluation reward
@@ -76,58 +77,66 @@ class Runner_MAPPO_MPE:
         self.ax.legend(loc='lower right')
         self.fig.show()
 
-        # Set up live plot for Shapley rewards per agent
+        # Set up live plot for Shapley rewards and baseline reward
         self.fig_shapley, self.ax_shapley = plt.subplots(figsize=(8, 6))
         self.lines_shapley = []  # One line per agent
+        self.line_original = None  # Line for baseline reward
         self.ax_shapley.set_xlabel('Training Steps')
-        self.ax_shapley.set_ylabel('Shapley Reward')
-        self.ax_shapley.set_title(env_title)
+        self.ax_shapley.set_ylabel('Reward')
+        self.ax_shapley.set_title(env_title + " - Shapley vs Baseline Reward")
         self.ax_shapley.legend(loc='lower right')
         self.fig_shapley.show()
 
         # Initialize reward normalization or scaling if enabled
         if self.args.use_reward_norm:
-            print("------use reward norm------")
+            print("Using reward normalization")
             self.reward_norm = Normalization(shape=self.args.N)
         elif self.args.use_reward_scaling:
-            print("------use reward scaling------")
+            print("Using reward scaling")
             self.reward_scaling = RewardScaling(shape=self.args.N, gamma=self.args.gamma)
 
     def run(self):
         evaluate_num = -1  # Number of evaluations performed
-        shapley_rewards_temp = []  # Temporary list to store Shapley rewards per training interval
+        shapley_rewards_temp = []  # Temporary storage for Shapley rewards per interval
+        original_rewards_temp = [] # Temporary storage for baseline rewards per interval
         last_interval = 0         # Training step count at the last update
 
         while self.total_steps < self.args.max_train_steps:
             if self.total_steps // self.args.evaluate_freq > evaluate_num:
-                self.evaluate_policy()  # Evaluate the policy
+                self.evaluate_policy()
                 evaluate_num += 1
 
-            _, episode_steps = self.run_episode_mpe(evaluate=False)  # Run one training episode
+            _, episode_steps = self.run_episode_mpe(evaluate=False)
             self.total_steps += episode_steps
 
-            # Train the agent once the replay buffer is full
             if self.replay_buffer.episode_num == self.args.batch_size:
-                # Train and get average Shapley rewards for each agent
-                avg_shapley_reward, _ = self.agent_n.train(self.replay_buffer, self.total_steps)
+                # The train function returns (average shapley reward, true reward)
+                avg_shapley_reward, true_reward = self.agent_n.train(self.replay_buffer, self.total_steps)
                 self.replay_buffer.reset_buffer()
 
                 shapley_rewards_temp.append(avg_shapley_reward)
+                # Multiply baseline reward by 0.2 as in the SMAC version
+                original_rewards_temp.append(np.mean(true_reward) * 0.2)
 
-                # Compute average Shapley rewards every 20k steps
                 if self.total_steps - last_interval >= 20000:
-                    rewards_array = np.array(shapley_rewards_temp)  # shape: [num_train, N]
-                    avg_20k = np.mean(rewards_array, axis=0)          # shape: [N]
+                    # Compute interval averages for each agent and baseline reward
+                    rewards_array = np.array(shapley_rewards_temp)
+                    avg_shapley_20k = np.mean(rewards_array, axis=0)
+                    self.shapley_rewards.append(avg_shapley_20k)
+
+                    avg_original_20k = np.mean(original_rewards_temp)
+                    self.original_rewards.append(avg_original_20k)
+
                     self.shapley_eval_steps.append(self.total_steps)
-                    self.shapley_rewards.append(avg_20k)
                     self.plot_shapley_rewards()
+                    self.save_shapley_csv()
 
                     shapley_rewards_temp = []
+                    original_rewards_temp = []
                     last_interval = self.total_steps
 
         self.evaluate_policy()  # Final evaluation
         self.env.close()
-        # After training, save CSV data and close live plotting
         self.save_eval_csv()
         plt.ioff()
         plt.show()
@@ -164,13 +173,13 @@ class Runner_MAPPO_MPE:
                 writer.writerow([step, reward])
 
     def plot_eval_rewards(self):
-        # Update data for evaluation reward plot
+        # Update data for the evaluation reward plot
         self.line.set_xdata(self.eval_steps)
         self.line.set_ydata(self.evaluate_rewards)
         self.ax.relim()
         self.ax.autoscale_view()
 
-        # Format x-axis labels dynamically
+        # Dynamic x-axis formatter (K for thousands and M for millions)
         def dynamic_formatter(x, pos):
             if x >= 1e6:
                 return f'{x/1e6:.1f}M'
@@ -182,28 +191,33 @@ class Runner_MAPPO_MPE:
 
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
-
         self.fig.savefig('./data_train/MAPPO_env_{}_number_{}_seed_{}_eval.png'.format(
             self.env_name, self.number, self.seed))
 
     def plot_shapley_rewards(self):
-        # Initialize lines for each agent if not already created
+        # Initialize plot lines for each agent and baseline reward, if not already created
         if not self.lines_shapley:
             for agent in range(self.args.N):
-                line, = self.ax_shapley.plot([], [], label=f'Agent {agent+1}')
+                line, = self.ax_shapley.plot([], [], label=f'Agent {agent+1} Shapley')
                 self.lines_shapley.append(line)
+            if self.line_original is None:
+                self.line_original, = self.ax_shapley.plot([], [], label='Baseline Reward', 
+                                                             color='black', linestyle='--')
             self.ax_shapley.legend(loc='lower right')
 
-        # Update each agent's Shapley reward data
+        # Update Shapley rewards for each agent
         for agent, line in enumerate(self.lines_shapley):
             rewards_agent = [reward[agent] for reward in self.shapley_rewards]
             line.set_xdata(self.shapley_eval_steps)
             line.set_ydata(rewards_agent)
 
+        # Update baseline reward data
+        self.line_original.set_xdata(self.shapley_eval_steps)
+        self.line_original.set_ydata(self.original_rewards)
+
         self.ax_shapley.relim()
         self.ax_shapley.autoscale_view()
 
-        # Format x-axis labels dynamically
         def dynamic_formatter(x, pos):
             if x >= 1e6:
                 return f'{x/1e6:.1f}M'
@@ -215,9 +229,19 @@ class Runner_MAPPO_MPE:
 
         self.fig_shapley.canvas.draw()
         self.fig_shapley.canvas.flush_events()
-
         self.fig_shapley.savefig('./data_train/MAPPO_env_{}_number_{}_seed_{}_shapley.png'.format(
             self.env_name, self.number, self.seed))
+
+    def save_shapley_csv(self):
+        csv_filename = './data_train/MAPPO_env_{}_number_{}_seed_{}_shapley.csv'.format(
+            self.env_name, self.number, self.seed)
+        with open(csv_filename, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            header = ['Training Steps'] + [f'Agent {i+1} Shapley' for i in range(self.args.N)] + ['Baseline Reward']
+            writer.writerow(header)
+            for step, shapley, baseline in zip(self.shapley_eval_steps, self.shapley_rewards, self.original_rewards):
+                row = [step] + list(shapley) + [baseline]
+                writer.writerow(row)
 
     def run_episode_mpe(self, evaluate=False):
         episode_reward = 0
@@ -253,13 +277,13 @@ class Runner_MAPPO_MPE:
         return episode_reward, episode_step + 1
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser("Hyperparameters Setting for MAPPO in MPE environment")
-    parser.add_argument("--max_train_steps", type=int, default=int(3e6), help="Maximum number of training steps")
-    parser.add_argument("--episode_limit", type=int, default=25, help="Maximum number of steps per episode")
-    parser.add_argument("--evaluate_freq", type=float, default=5000, help="Frequency of policy evaluation in steps")
-    parser.add_argument("--evaluate_times", type=float, default=3, help="Number of evaluations per evaluation cycle")
-    parser.add_argument("--batch_size", type=int, default=32, help="Number of episodes per training batch")
-    parser.add_argument("--mini_batch_size", type=int, default=8, help="Number of episodes per mini-batch")
+    parser = argparse.ArgumentParser("Hyperparameters for MAPPO in MPE environment")
+    parser.add_argument("--max_train_steps", type=int, default=int(3e6), help="Maximum training steps")
+    parser.add_argument("--episode_limit", type=int, default=25, help="Maximum steps per episode")
+    parser.add_argument("--evaluate_freq", type=float, default=5000, help="Policy evaluation frequency (steps)")
+    parser.add_argument("--evaluate_times", type=float, default=3, help="Number of evaluations per cycle")
+    parser.add_argument("--batch_size", type=int, default=32, help="Episodes per training batch")
+    parser.add_argument("--mini_batch_size", type=int, default=8, help="Episodes per mini-batch")
     parser.add_argument("--rnn_hidden_dim", type=int, default=64, help="Number of neurons in RNN hidden layers")
     parser.add_argument("--mlp_hidden_dim", type=int, default=64, help="Number of neurons in MLP hidden layers")
     parser.add_argument("--alliance_hidden_dim", type=int, default=64, help="Number of neurons in alliance hidden layers")
@@ -268,7 +292,7 @@ if __name__ == '__main__':
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor")
     parser.add_argument("--lamda", type=float, default=0.95, help="GAE parameter")
     parser.add_argument("--epsilon", type=float, default=0.2, help="Clipping parameter for PPO")
-    parser.add_argument("--K_epochs", type=int, default=15, help="Number of epochs per training iteration")
+    parser.add_argument("--K_epochs", type=int, default=15, help="Training epochs per iteration")
     parser.add_argument("--use_adv_norm", type=bool, default=True, help="Use advantage normalization")
     parser.add_argument("--use_reward_norm", type=bool, default=True, help="Use reward normalization")
     parser.add_argument("--use_reward_scaling", type=bool, default=False, help="Use reward scaling")
@@ -283,5 +307,5 @@ if __name__ == '__main__':
     parser.add_argument("--use_value_clip", type=bool, default=False, help="Whether to use value clipping")
 
     args = parser.parse_args()
-    runner = Runner_MAPPO_MPE(args, env_name="simple_spread", number=1, seed=0)
+    runner = Runner_MAPPO_MPE(args, env_name="simple_spread", number=1, seed=1)
     runner.run()

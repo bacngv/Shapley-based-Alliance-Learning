@@ -23,13 +23,14 @@ class Runner_MAPPO_MULTIWALKER:
         self.number = number
         self.seed = seed
 
+        # Set random seeds for reproducibility
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
 
         sns.set_theme(style="whitegrid", font_scale=1.2)
         discrete = False
 
-        # Create multiwalker environment with 3 agents
+        # Initialize the multiwalker environment (3 agents, fixed terrain length)
         self.env = GymMultiWalkerWrapper(n_walkers=3, terrain_length=500, max_cycles=args.max_cycles)
         self.args.N = 3  
         self.args.obs_dim_n = [self.env.observation_space.shape[0] for _ in range(3)]
@@ -37,7 +38,8 @@ class Runner_MAPPO_MULTIWALKER:
             self.args.action_dim_n = [self.env.action_space.n for _ in range(3)]
         else:
             self.args.action_dim_n = [self.env.action_space.shape[0] for _ in range(3)]
-
+        
+        # Set state and action dimensions based on the first agent (assumed identical)
         self.args.obs_dim = self.args.obs_dim_n[0]
         self.args.action_dim = self.args.action_dim_n[0]
         self.args.state_dim = self.args.obs_dim * 3
@@ -47,26 +49,29 @@ class Runner_MAPPO_MULTIWALKER:
         print("action_space=", self.env.action_space)
         print("action_dim_n={}".format(self.args.action_dim_n))
 
+        # Initialize the MAPPO agent and replay buffer
         self.agent_n = MAPPO_MULTIWALKER(self.args)
         self.replay_buffer = ReplayBuffer(self.args)
 
+        # Initialize Tensorboard writer for logging purposes
         self.writer = SummaryWriter(log_dir='runs/MAPPO/MAPPO_env_{}_number_{}_seed_{}'.format(
             self.env_name, self.number, self.seed))
 
+        # Data structures for storing evaluation and reward metrics
         self.evaluate_rewards = []
         self.eval_steps = []
         self.total_steps = 0
 
-        # Storage for Shapley rewards (for each agent)
-        self.shapley_rewards = []      
-        self.shapley_eval_steps = []   
+        self.shapley_rewards = []       # Shapley value rewards for each agent
+        self.original_rewards = []      # Baseline reward (global_reward / N)
+        self.shapley_eval_steps = []    # Training steps corresponding to shapley rewards
 
         self.next_save_step = 20000
         os.makedirs('./data_train', exist_ok=True)
 
         # Setup live plot for evaluation rewards
         plt.ion()
-        self.fig, self.ax = plt.subplots(figsize=(8,6))
+        self.fig, self.ax = plt.subplots(figsize=(8, 6))
         (self.line,) = self.ax.plot([], [], color='orange', label='MAPPO')
         self.ax.set_xlabel('Training Steps')
         self.ax.set_ylabel('Episode Reward')
@@ -75,14 +80,16 @@ class Runner_MAPPO_MULTIWALKER:
         self.ax.legend(loc='lower right')
         self.fig.show()
 
-        # Setup live plot for Shapley rewards for each agent
+        # Setup live plot for Shapley and baseline rewards
         self.fig_shapley, self.ax_shapley = plt.subplots(figsize=(8, 6))
         self.lines_shapley = []
+        self.line_original = None  # For baseline reward
         self.ax_shapley.set_xlabel('Training Steps')
-        self.ax_shapley.set_ylabel('Shapley Reward')
-        self.ax_shapley.set_title(env_title)
+        self.ax_shapley.set_ylabel('Reward')
+        self.ax_shapley.set_title(f"{env_title} - Shapley vs Baseline Reward")
         self.fig_shapley.show()
 
+        # Configure reward normalization or scaling if enabled
         if self.args.use_reward_norm:
             print("------use reward normalization------")
             self.reward_norm = Normalization(shape=self.args.N)
@@ -93,35 +100,50 @@ class Runner_MAPPO_MULTIWALKER:
     def run(self):
         evaluate_num = -1
         shapley_rewards_temp = []
+        original_rewards_temp = []  # Temporary storage for baseline rewards per training interval
         last_interval = 0
 
         while self.total_steps < self.args.max_train_steps:
+            # Periodically evaluate the policy
             if self.total_steps // self.args.evaluate_freq > evaluate_num:
                 self.evaluate_policy()
                 evaluate_num += 1
 
+            # Run a single episode and accumulate its steps
             _, episode_steps = self.run_episode(evaluate=False)
             self.total_steps += episode_steps
 
+            # Perform training when a batch of episodes is collected
             if self.replay_buffer.episode_num == self.args.batch_size:
-                avg_shapley_reward, _ = self.agent_n.train(self.replay_buffer, self.total_steps)
+                avg_shapley_reward, avg_true_reward = self.agent_n.train(self.replay_buffer, self.total_steps)
                 self.replay_buffer.reset_buffer()
 
                 shapley_rewards_temp.append(avg_shapley_reward)
+                original_rewards_temp.append(np.mean(avg_true_reward))
 
+                # Log aggregated rewards every 20,000 training steps
                 if self.total_steps - last_interval >= 20000:
-                    rewards_array = np.array(shapley_rewards_temp)
-                    avg_20k = np.mean(rewards_array, axis=0)
+                    shapley_rewards_array = np.array(shapley_rewards_temp)
+                    avg_shapley_20k = np.mean(shapley_rewards_array, axis=0)
+                    self.shapley_rewards.append(avg_shapley_20k)
+
+                    original_rewards_array = np.array(original_rewards_temp)
+                    avg_original_20k = np.mean(original_rewards_array) * 0.2  # New baseline calculation
+                    self.original_rewards.append(avg_original_20k)
+
                     self.shapley_eval_steps.append(self.total_steps)
-                    self.shapley_rewards.append(avg_20k)
                     self.plot_shapley_rewards()
+                    self.save_shapley_csv()
 
                     shapley_rewards_temp = []
+                    original_rewards_temp = []
                     last_interval = self.total_steps
 
+        # Final evaluation and cleanup after training is complete
         self.evaluate_policy()
         self.env.close()
         self.save_eval_csv()
+        self.save_shapley_csv()
         plt.ioff()
         plt.show()
 
@@ -139,10 +161,12 @@ class Runner_MAPPO_MULTIWALKER:
         print("total_steps:{} \t evaluate_reward:{}".format(self.total_steps, evaluate_reward))
         self.writer.add_scalar('evaluate_step_rewards_{}'.format(self.env_name), evaluate_reward, global_step=self.total_steps)
 
+        # Save model and update evaluation plots
         self.agent_n.save_model(self.env_name, self.number, self.seed, self.total_steps)
         self.save_eval_csv()
         self.plot_eval_rewards()
 
+        # Save a GIF of the agent's performance periodically
         if self.total_steps >= self.next_save_step:
             gif_filename = './data_train/{}_steps_{}.gif'.format(self.env_name, self.total_steps)
             self.render_and_save_gif(gif_filename)
@@ -157,12 +181,24 @@ class Runner_MAPPO_MULTIWALKER:
             for step, reward in zip(self.eval_steps, self.evaluate_rewards):
                 writer.writerow([step, reward])
 
+    def save_shapley_csv(self):
+        csv_filename = './data_train/MAPPO_env_{}_number_{}_seed_{}_shapley.csv'.format(
+            self.env_name, self.number, self.seed)
+        with open(csv_filename, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            header = ['Training Steps'] + [f'Agent {i+1} Shapley' for i in range(self.args.N)] + ['Baseline Reward']
+            writer.writerow(header)
+            for step, shapley, baseline in zip(self.shapley_eval_steps, self.shapley_rewards, self.original_rewards):
+                row = [step] + list(shapley) + [baseline]
+                writer.writerow(row)
+
     def plot_eval_rewards(self):
         self.line.set_xdata(self.eval_steps)
         self.line.set_ydata(self.evaluate_rewards)
         self.ax.relim()
         self.ax.autoscale_view()
 
+        # Format x-axis values to display in K or M as needed
         def dynamic_formatter(x, pos):
             if x >= 1e6:
                 return f'{x/1e6:.1f}M'
@@ -178,18 +214,25 @@ class Runner_MAPPO_MULTIWALKER:
         self.fig.savefig('./data_train/MAPPO_env_{}_number_{}_seed_{}_eval.png'.format(
             self.env_name, self.number, self.seed))
 
-
     def plot_shapley_rewards(self):
+        # Initialize plot lines for each agent if not already created
         if not self.lines_shapley:
             for agent in range(self.args.N):
-                line, = self.ax_shapley.plot([], [], label=f'Agent {agent+1}')
+                line, = self.ax_shapley.plot([], [], label=f'Agent {agent+1} Shapley')
                 self.lines_shapley.append(line)
+            self.line_original, = self.ax_shapley.plot([], [], label='Baseline Reward', 
+                                                      color='black', linestyle='--')
             self.ax_shapley.legend(loc='lower right')
 
+        # Update each agent's reward line
         for agent, line in enumerate(self.lines_shapley):
             rewards_agent = [reward[agent] for reward in self.shapley_rewards]
             line.set_xdata(self.shapley_eval_steps)
             line.set_ydata(rewards_agent)
+
+        # Update the baseline reward line
+        self.line_original.set_xdata(self.shapley_eval_steps)
+        self.line_original.set_ydata(self.original_rewards)
 
         self.ax_shapley.relim()
         self.ax_shapley.autoscale_view()
@@ -219,11 +262,13 @@ class Runner_MAPPO_MULTIWALKER:
             self.agent_n.critic.rnn_hidden = None
 
         for episode_step in range(self.args.max_cycles):
+            # Get actions and log probabilities from the agent
             raw_a_n, a_n, a_logprob_n = self.agent_n.choose_action(obs, evaluate=evaluate)
             a_n_array = np.stack([a_n[key] for key in sorted(a_n.keys())])
             raw_a_n_array = np.stack([raw_a_n[key] for key in sorted(raw_a_n.keys())])
             a_logprob_array = np.stack([a_logprob_n[key] for key in sorted(a_logprob_n.keys())])
             
+            # Concatenate observations from all agents to form the global state
             s = np.concatenate([obs[agent].flatten() for agent in self.env.agents])
             v_n = self.agent_n.get_value(s)
             obs_next, r_n, done, infos = self.env.step(a_n)
@@ -270,7 +315,7 @@ class Runner_MAPPO_MULTIWALKER:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser("Hyperparameters Setting for MAPPO in Multiwalker Environment")
-    parser.add_argument("--max_train_steps", type=int, default=int(3e6), help="Maximum training steps")
+    parser.add_argument("--max_train_steps", type=int, default=int(2e6), help="Maximum training steps")
     parser.add_argument("--max_cycles", type=int, default=500, help="Maximum steps per episode")
     parser.add_argument("--evaluate_freq", type=float, default=5000, help="Evaluate policy every evaluate_freq steps")
     parser.add_argument("--evaluate_times", type=int, default=3, help="Number of evaluations")

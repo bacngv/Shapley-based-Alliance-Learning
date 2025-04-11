@@ -1,11 +1,11 @@
 import os 
-os.environ["SDL_VIDEODRIVER"] = "dummy"  # Use dummy video driver for headless environments (e.g., Colab)
+# Use dummy video driver for headless environments (e.g., Colab)
+os.environ["SDL_VIDEODRIVER"] = "dummy"
 
-import os
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns  # Used for styling plots
+import seaborn as sns
 import csv
 from torch.utils.tensorboard import SummaryWriter
 import argparse
@@ -13,8 +13,8 @@ from normalization import Normalization, RewardScaling
 from replay_buffer import ReplayBuffer
 from mappo_kaz_owen import MAPPO_KAZ  
 from kaz import KAZGymWrapper 
-import imageio  # Library to save GIFs
-from IPython import display as ipy_display  # To display GIFs in a notebook
+import imageio
+from IPython import display as ipy_display
 from matplotlib.ticker import FuncFormatter
 
 class Runner_KAZ:
@@ -22,20 +22,20 @@ class Runner_KAZ:
         self.args = args
         self.seed = seed
 
-        # Set seed for numpy and torch
+        # Set seed for reproducibility
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
 
         sns.set_theme(style="whitegrid", font_scale=1.2)
 
+        # Initialize the environment
         self.env = KAZGymWrapper(render_mode="rgb_array")
-        # Number of agents equals the length of the agent list in the environment
-        self.args.N = len(self.env.agents)
+        self.args.N = len(self.env.agents)  # Number of agents
         agent0 = self.env.agents[0]
-        # Assuming all agents share the same observation and action spaces
+        # Define observation and action dimensions
         self.args.obs_dim = int(np.prod(self.env.observation_space[agent0].shape))
         self.args.action_dim = self.env.action_space[agent0].n
-        # Global state is the concatenation of all agents' observations (assuming each agent has the same obs_dim)
+        # Global state is the concatenation of all agents' observations
         self.args.state_dim = self.args.N * self.args.obs_dim
         
         print("Agents =", self.env.agents)
@@ -48,22 +48,26 @@ class Runner_KAZ:
         self.agent = MAPPO_KAZ(self.args)
         self.replay_buffer = ReplayBuffer(self.args)
         self.writer = SummaryWriter(log_dir='runs/KAZ/KAZ_seed_{}'.format(self.seed))
-        # Declare lists to store evaluation results
+        
+        # Lists for storing evaluation data
         self.evaluate_rewards = []
         self.eval_steps = []
         self.total_steps = 0
 
-        # Variables for storing Owen rewards
-        self.owen_rewards = []       # Stores the average Owen rewards per interval (each interval is 20K steps)
-        self.owen_eval_steps = []    # Stores the corresponding steps for the Owen values
-        self.lines_owen = []         # Used to plot individual lines for each agent
+        # Lists for storing and plotting rewards
+        self.owen_rewards = []       # Average Owen reward for agents every 20K steps
+        self.baseline_rewards = []   # Baseline rewards computed from average true reward * 0.2
+        self.owen_eval_steps = []    # Corresponding training steps
 
-        # Create folder to save data if it doesn't exist
+        self.lines_owen = []         # Plot lines for each agent's Owen reward
+        self.line_baseline = None    # Plot line for baseline reward
+
+        # Create folder to save training data
         os.makedirs('./data_train', exist_ok=True)
 
-        # Initialize live plot for evaluation reward
+        # Initialize live plot for evaluation rewards
         plt.ion()
-        self.fig, self.ax = plt.subplots(figsize=(8,6))
+        self.fig, self.ax = plt.subplots(figsize=(8, 6))
         (self.line,) = self.ax.plot([], [], color='orange', label='KAZ')
         self.ax.set_xlabel('Training Steps')
         self.ax.set_ylabel('Episode Reward')
@@ -71,15 +75,15 @@ class Runner_KAZ:
         self.ax.legend(loc='lower right')
         self.fig.show()
 
-        # Initialize live plot for Owen rewards (lines will be created when data is available)
-        self.fig_owen, self.ax_owen = plt.subplots(figsize=(8,6))
+        # Initialize live plot for Owen and Baseline rewards
+        self.fig_owen, self.ax_owen = plt.subplots(figsize=(8, 6))
         self.ax_owen.set_xlabel('Training Steps')
-        self.ax_owen.set_ylabel('Owen Reward')
-        self.ax_owen.set_title('Owen Rewards - KAZ')
+        self.ax_owen.set_ylabel('Reward')
+        self.ax_owen.set_title('Owen vs Baseline Rewards - KAZ')
         self.ax_owen.legend(loc='lower right')
         self.fig_owen.show()
 
-        # Use reward normalization/scaling if required
+        # Setup reward normalization or scaling if enabled
         if self.args.use_reward_norm:
             print("------use reward norm------")
             self.reward_norm = Normalization(shape=self.args.N)
@@ -87,13 +91,14 @@ class Runner_KAZ:
             print("------use reward scaling------")
             self.reward_scaling = RewardScaling(shape=self.args.N, gamma=self.args.gamma)
         
-        # Initialize GIF saving step (e.g., every 20000 steps)
+        # Initialize step for saving GIFs
         self.next_save_step = 20000
 
     def run(self):
-        evaluate_num = -1  # Number of evaluations performed
-        owen_rewards_temp = []  # Temporarily store Owen values after each training cycle
-        last_interval = 0         # Last step at which Owen values were updated
+        evaluate_num = -1  # Track number of evaluations
+        owen_rewards_temp = []      # Temporary storage for Owen rewards
+        baseline_rewards_temp = []  # Temporary storage for baseline rewards
+        last_interval = 0           # Last training step when rewards were updated
 
         while self.total_steps < self.args.max_train_steps:
             if self.total_steps // self.args.evaluate_freq > evaluate_num:
@@ -104,25 +109,32 @@ class Runner_KAZ:
             self.total_steps += episode_steps
 
             if self.replay_buffer.episode_num == self.args.batch_size:
-                # Train the agent and obtain the Owen value 
-                avg_owen_reward, _ = self.agent.train(self.replay_buffer, self.total_steps)
+                # Train the agent and retrieve average rewards
+                avg_owen_reward, avg_true_reward = self.agent.train(self.replay_buffer, self.total_steps)
                 self.replay_buffer.reset_buffer()
                 
-                # Save temporary Owen reward
                 owen_rewards_temp.append(avg_owen_reward)
+                baseline_rewards_temp.append(np.mean(avg_true_reward))
                 
-                # Update and plot Owen rewards every 20000 steps
+                # Update rewards every 20000 steps
                 if self.total_steps - last_interval >= 20000:
-                    rewards_array = np.array(owen_rewards_temp)  # Array shape: (num_train, N)
-                    avg_20k = np.mean(rewards_array, axis=0)         # Average for each agent, shape: (N,)
+                    owen_array = np.array(owen_rewards_temp)  # Shape: (num_batches, N)
+                    avg_owen_20k = np.mean(owen_array, axis=0)
+                    self.owen_rewards.append(avg_owen_20k)
+                    
+                    baseline_array = np.array(baseline_rewards_temp)
+                    avg_baseline_20k = np.mean(baseline_array) * 0.2
+                    self.baseline_rewards.append(avg_baseline_20k)
+                    
                     self.owen_eval_steps.append(self.total_steps)
-                    self.owen_rewards.append(avg_20k)
                     self.plot_owen_rewards()
+                    self.save_owen_csv()
                     
                     owen_rewards_temp = []
+                    baseline_rewards_temp = []
                     last_interval = self.total_steps
 
-        self.evaluate_policy()  # Final evaluation
+        self.evaluate_policy()  # Final evaluation after training
         self.env.close()
         self.save_eval_csv()
         plt.ioff()
@@ -130,7 +142,7 @@ class Runner_KAZ:
 
     def evaluate_policy(self):
         evaluate_reward = 0
-        for _ in range(self.args.evaluate_times):
+        for _ in range(int(self.args.evaluate_times)):
             episode_reward, _ = self.run_episode(evaluate=True)
             evaluate_reward += episode_reward
 
@@ -141,19 +153,19 @@ class Runner_KAZ:
         print("total_steps:{} \t evaluate_reward:{}".format(self.total_steps, evaluate_reward))
         self.writer.add_scalar('evaluate_step_rewards_KAZ', evaluate_reward, global_step=self.total_steps)
         
-        # Save the model if needed
+        # Save the model as needed
         self.agent.save_model("KAZ", 1, self.seed, self.total_steps)
         
         self.save_eval_csv()
         self.plot_eval_rewards()
 
-        # Save a GIF every time evaluation is performed if the save step is reached
         if self.total_steps >= self.next_save_step:
             gif_filename = './data_train/KAZ_seed_{}_steps_{}.gif'.format(self.seed, self.total_steps)
             self.render_and_save_gif(gif_filename)
             self.next_save_step += 20000
 
     def save_eval_csv(self):
+        # Save evaluation data to CSV
         csv_filename = './data_train/KAZ_seed_{}.csv'.format(self.seed)
         with open(csv_filename, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
@@ -161,8 +173,19 @@ class Runner_KAZ:
             for step, reward in zip(self.eval_steps, self.evaluate_rewards):
                 writer.writerow([step, reward])
 
+    def save_owen_csv(self):
+        # Save Owen and baseline rewards to CSV
+        csv_filename = './data_train/KAZ_seed_{}_owen.csv'.format(self.seed)
+        with open(csv_filename, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            header = ['Training Steps'] + [f'Agent {i+1} Owen' for i in range(self.args.N)] + ['Baseline Reward']
+            writer.writerow(header)
+            for step, owen, baseline in zip(self.owen_eval_steps, self.owen_rewards, self.baseline_rewards):
+                row = [step] + list(owen) + [baseline]
+                writer.writerow(row)
+
     def plot_eval_rewards(self):
-        # Update data for the evaluation reward plot
+        # Update and redraw the evaluation reward plot
         self.line.set_xdata(self.eval_steps)
         self.line.set_ydata(self.evaluate_rewards)
         self.ax.relim()
@@ -178,22 +201,28 @@ class Runner_KAZ:
         self.ax.xaxis.set_major_formatter(FuncFormatter(dynamic_formatter))
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
-        # Save the plot
         self.fig.savefig('./data_train/KAZ_seed_{}_eval.png'.format(self.seed))
 
     def plot_owen_rewards(self):
-        # Initialize lines for each agent if not already created
+        # Initialize plot lines for agents if not already initialized
         if not self.lines_owen:
             for agent in range(self.args.N):
-                line, = self.ax_owen.plot([], [], label=f'Agent {agent+1}')
+                line, = self.ax_owen.plot([], [], label=f'Agent {agent+1} Owen')
                 self.lines_owen.append(line)
+            # Initialize the plot line for baseline rewards
+            self.line_baseline, = self.ax_owen.plot([], [], label='Baseline Reward', 
+                                                     color='black', linestyle='--')
             self.ax_owen.legend(loc='lower right')
         
-        # Update data for each agent
+        # Update data for each agent's Owen reward line
         for agent, line in enumerate(self.lines_owen):
             rewards_agent = [reward[agent] for reward in self.owen_rewards]
             line.set_xdata(self.owen_eval_steps)
             line.set_ydata(rewards_agent)
+        
+        # Update data for the baseline reward line
+        self.line_baseline.set_xdata(self.owen_eval_steps)
+        self.line_baseline.set_ydata(self.baseline_rewards)
         
         self.ax_owen.relim()
         self.ax_owen.autoscale_view()
@@ -206,48 +235,34 @@ class Runner_KAZ:
             else:
                 return f'{int(x)}'
         self.ax_owen.xaxis.set_major_formatter(FuncFormatter(dynamic_formatter))
-
         self.fig_owen.canvas.draw()
         self.fig_owen.canvas.flush_events()
-        # Save the plot
         self.fig_owen.savefig('./data_train/KAZ_seed_{}_owen.png'.format(self.seed))
 
     def render_and_save_gif(self, filename='KAZ.gif'):
+        # Render the environment and save the frames as a GIF
         frames = []
         obs_dict = self.env.reset()
         done = False
-        # Collect frames during an episode
         while not done:
-            # Get frame from the environment
             frame = self.env.render(mode='rgb_array')
             frames.append(frame)
             # Convert observations from dictionary to numpy array
-            obs_list = []
-            for agent in self.env.agents:
-                obs_list.append(obs_dict[agent].flatten())
+            obs_list = [obs_dict[agent].flatten() for agent in self.env.agents]
             obs_n = np.stack(obs_list, axis=0)
-            # Select actions (in evaluation mode: without adding noise)
+            # Choose action in evaluation mode (without noise)
             a_n, _ = self.agent.choose_action(obs_n, evaluate=True)
-            # Create action dictionary for the environment
-            actions = {}
-            for i, agent in enumerate(self.env.agents):
-                actions[agent] = a_n[i]
+            actions = {agent: a_n[i] for i, agent in enumerate(self.env.agents)}
             obs_dict, _, done, _ = self.env.step(actions)
-        # Save frames as a GIF file
         imageio.mimsave(filename, frames, fps=30)
         print("Saved GIF to", filename)
-        # Display GIF if running in a notebook
         ipy_display.display(ipy_display.Image(filename=filename))
 
     def run_episode(self, evaluate=False):
         episode_reward = 0
-        # Reset the environment which returns a dictionary of observations for each agent
         obs_dict = self.env.reset()
-        # Flatten each observation and arrange in order of self.env.agents
-        obs_list = []
-        for agent in self.env.agents:
-            obs_list.append(obs_dict[agent].flatten())
-        obs_n = np.stack(obs_list, axis=0)  # shape: (N, obs_dim)
+        obs_list = [obs_dict[agent].flatten() for agent in self.env.agents]
+        obs_n = np.stack(obs_list, axis=0)
         
         if self.args.use_reward_scaling:
             self.reward_scaling.reset()
@@ -256,32 +271,19 @@ class Runner_KAZ:
             self.agent.critic.rnn_hidden = None
         
         for episode_step in range(self.args.episode_limit):
-            # Choose actions for all agents: a_n has shape (N,) and a_logprob_n has shape (N,)
             a_n, a_logprob_n = self.agent.choose_action(obs_n, evaluate=evaluate)
-            # Create global state: concatenate all agents' observations
-            state = np.concatenate(obs_n, axis=0)  # shape: (N*obs_dim,)
-            v_n = self.agent.get_value(state)  # Expected to return an array (N,)
+            # Concatenate all agent observations to form the global state
+            state = np.concatenate(obs_n, axis=0)
+            v_n = self.agent.get_value(state)
             
-            # Create action dictionary for the environment
-            actions = {}
-            for i, agent in enumerate(self.env.agents):
-                actions[agent] = a_n[i]
-            
+            actions = {agent: a_n[i] for i, agent in enumerate(self.env.agents)}
             next_obs_dict, r_dict, done, _ = self.env.step(actions)
-            
-            # Convert next observations: flatten each agent's observation
-            next_obs_list = []
-            for agent in self.env.agents:
-                next_obs_list.append(next_obs_dict[agent].flatten())
+            next_obs_list = [next_obs_dict[agent].flatten() for agent in self.env.agents]
             obs_next_n = np.stack(next_obs_list, axis=0)
             
-            # Convert rewards: get in the order of self.env.agents
-            r_list = []
-            for agent in self.env.agents:
-                r_list.append(r_dict[agent])
-            r_n = np.array(r_list)  # shape: (N,)
-            
-            # Accumulate global reward (here using the sum of rewards of all agents, can be adjusted based on objectives)
+            # Collect rewards for all agents
+            r_list = [r_dict[agent] for agent in self.env.agents]
+            r_n = np.array(r_list)
             episode_reward += r_n.sum()
             
             if not evaluate:
@@ -289,7 +291,6 @@ class Runner_KAZ:
                     r_n = self.reward_norm(r_n)
                 elif self.args.use_reward_scaling:
                     r_n = self.reward_scaling(r_n)
-                # Store the transition: store all information for all agents
                 self.replay_buffer.store_transition(episode_step, obs_n, state, v_n, a_n, a_logprob_n, r_n, done)
             
             obs_n = obs_next_n
@@ -305,35 +306,35 @@ class Runner_KAZ:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser("Hyperparameters Setting for MAPPO in KAZ environment")
-    parser.add_argument("--max_train_steps", type=int, default=int(3e6), help="Maximum number of training steps")
+    parser.add_argument("--max_train_steps", type=int, default=int(1e6), help="Maximum number of training steps")
     parser.add_argument("--episode_limit", type=int, default=500, help="Maximum number of steps per episode")
-    parser.add_argument("--evaluate_freq", type=float, default=5000, help="Evaluate the policy every 'evaluate_freq' steps")
-    parser.add_argument("--evaluate_times", type=float, default=3, help="Number of evaluations")
+    parser.add_argument("--evaluate_freq", type=float, default=5000, help="Evaluation frequency in training steps")
+    parser.add_argument("--evaluate_times", type=float, default=3, help="Number of evaluations per evaluation phase")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size (number of episodes)")
     parser.add_argument("--mini_batch_size", type=int, default=8, help="Minibatch size (number of episodes)")
-    parser.add_argument("--rnn_hidden_dim", type=int, default=64, help="Number of neurons in RNN hidden layers")
-    parser.add_argument("--mlp_hidden_dim", type=int, default=64, help="Number of neurons in MLP hidden layers")
-    parser.add_argument("--alliance_hidden_dim", type=int, default=64, help="Number of neurons in alliance hidden layers")
+    parser.add_argument("--rnn_hidden_dim", type=int, default=64, help="RNN hidden dimension")
+    parser.add_argument("--mlp_hidden_dim", type=int, default=64, help="MLP hidden dimension")
+    parser.add_argument("--alliance_hidden_dim", type=int, default=64, help="Alliance hidden dimension")
     parser.add_argument("--embed_dim", type=int, default=64, help="Embedding dimension")
     parser.add_argument("--lr", type=float, default=5e-4, help="Learning rate")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor")
     parser.add_argument("--lamda", type=float, default=0.95, help="GAE parameter")
     parser.add_argument("--epsilon", type=float, default=0.2, help="Clipping parameter")
-    parser.add_argument("--K_epochs", type=int, default=15, help="Number of epochs")
+    parser.add_argument("--K_epochs", type=int, default=15, help="Number of training epochs")
     parser.add_argument("--use_adv_norm", type=bool, default=True, help="Use advantage normalization")
     parser.add_argument("--use_reward_norm", type=bool, default=True, help="Use reward normalization")
     parser.add_argument("--use_reward_scaling", type=bool, default=False, help="Use reward scaling")
-    parser.add_argument("--entropy_coef", type=float, default=0.01, help="Policy entropy coefficient")
+    parser.add_argument("--entropy_coef", type=float, default=0.01, help="Entropy coefficient for policy")
     parser.add_argument("--use_lr_decay", type=bool, default=True, help="Use learning rate decay")
     parser.add_argument("--use_grad_clip", type=bool, default=True, help="Use gradient clipping")
-    parser.add_argument("--use_orthogonal_init", type=bool, default=True, help="Use orthogonal initialization")
-    parser.add_argument("--set_adam_eps", type=bool, default=True, help="Set Adam epsilon=1e-5")
-    parser.add_argument("--use_relu", type=bool, default=False, help="Use ReLU (if False, use tanh)")
-    parser.add_argument("--use_rnn", type=bool, default=False, help="Whether to use RNN")
-    parser.add_argument("--add_agent_id", type=bool, default=False, help="Whether to add agent id")
-    parser.add_argument("--use_value_clip", type=bool, default=False, help="Whether to use value clipping")
+    parser.add_argument("--use_orthogonal_init", type=bool, default=True, help="Use orthogonal weight initialization")
+    parser.add_argument("--set_adam_eps", type=bool, default=True, help="Set Adam epsilon to 1e-5")
+    parser.add_argument("--use_relu", type=bool, default=False, help="Use ReLU activations (otherwise tanh)")
+    parser.add_argument("--use_rnn", type=bool, default=False, help="Flag to use RNN in the network")
+    parser.add_argument("--add_agent_id", type=bool, default=False, help="Flag to include agent id in observations")
+    parser.add_argument("--use_value_clip", type=bool, default=False, help="Use value function clipping")
     parser.add_argument("--coalition_ids", type=int, nargs='+', default=[0, 0, 1, 1],
-                        help="List of coalition ids for agents (ex: [0, 0, 1, 1])")
+                        help="Coalition IDs for agents (e.g., [0, 0, 1, 1])")
     args = parser.parse_args()
     runner = Runner_KAZ(args, seed=0)
     runner.run()

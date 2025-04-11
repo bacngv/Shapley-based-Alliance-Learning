@@ -1,11 +1,10 @@
 import os 
-os.environ["SDL_VIDEODRIVER"] = "dummy"  # Use dummy video driver for headless environments (e.g., Colab)
+os.environ["SDL_VIDEODRIVER"] = "dummy"  # Use dummy video driver for headless environments
 
-import os
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
-import seaborn as sns  # Used for styling plots
+import seaborn as sns  # Plot styling
 import csv
 from torch.utils.tensorboard import SummaryWriter
 import argparse
@@ -13,8 +12,8 @@ from normalization import Normalization, RewardScaling
 from replay_buffer import ReplayBuffer
 from mappo_kaz_shapley import MAPPO_KAZ  
 from kaz import KAZGymWrapper 
-import imageio  # Library to save GIFs
-from IPython import display as ipy_display  # To display GIFs in a notebook
+import imageio  # To save GIFs
+from IPython import display as ipy_display  # For displaying GIFs in notebooks
 from matplotlib.ticker import FuncFormatter
 
 class Runner_KAZ:
@@ -22,21 +21,18 @@ class Runner_KAZ:
         self.args = args
         self.seed = seed
 
-        # Set seed for numpy and torch
+        # Set random seed for reproducibility
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
 
         sns.set_theme(style="whitegrid", font_scale=1.2)
 
         self.env = KAZGymWrapper(render_mode="rgb_array")
-        # Number of agents equals the length of the agent list in the environment
-        self.args.N = len(self.env.agents)
+        self.args.N = len(self.env.agents)  # Number of agents
         agent0 = self.env.agents[0]
-        # Assuming all agents share the same observation and action spaces
         self.args.obs_dim = int(np.prod(self.env.observation_space[agent0].shape))
         self.args.action_dim = self.env.action_space[agent0].n
-        # Global state is the concatenation of all agents' observations (assuming each agent has the same obs_dim)
-        self.args.state_dim = self.args.N * self.args.obs_dim
+        self.args.state_dim = self.args.N * self.args.obs_dim  # Global state dimension
 
         print("Agents =", self.env.agents)
         print("observation_space =", self.env.observation_space)
@@ -48,20 +44,22 @@ class Runner_KAZ:
         self.agent = MAPPO_KAZ(self.args)
         self.replay_buffer = ReplayBuffer(self.args)
         self.writer = SummaryWriter(log_dir='runs/KAZ/KAZ_seed_{}'.format(self.seed))
-        # Declare lists to store evaluation results
+        
+        # Evaluation tracking
         self.evaluate_rewards = []
         self.eval_steps = []
         self.total_steps = 0
 
-        # Variables for storing Shapley rewards
-        self.shapley_rewards = []       # Stores the average Shapley rewards per interval (each interval is 20K steps)
-        self.shapley_eval_steps = []    # Stores the corresponding steps for the Shapley values
-        self.lines_shapley = []         # Used to plot individual lines for each agent
+        # Shapley and baseline rewards tracking for plotting
+        self.shapley_rewards = []       
+        self.shapley_eval_steps = []    
+        self.original_rewards = []      
+        self.lines_shapley = []         
+        self.line_original = None       
 
-        # Create folder to save data if it doesn't exist
         os.makedirs('./data_train', exist_ok=True)
 
-        # Initialize live plot for evaluation reward
+        # Set up live plot for evaluation rewards
         plt.ion()
         self.fig, self.ax = plt.subplots(figsize=(8,6))
         (self.line,) = self.ax.plot([], [], color='orange', label='KAZ')
@@ -71,15 +69,15 @@ class Runner_KAZ:
         self.ax.legend(loc='lower right')
         self.fig.show()
 
-        # Initialize live plot for Shapley rewards (lines will be created when data is available)
+        # Set up live plot for Shapley rewards
         self.fig_shapley, self.ax_shapley = plt.subplots(figsize=(8,6))
         self.ax_shapley.set_xlabel('Training Steps')
-        self.ax_shapley.set_ylabel('Shapley Reward')
-        self.ax_shapley.set_title('Shapley Rewards - KAZ')
+        self.ax_shapley.set_ylabel('Reward')
+        self.ax_shapley.set_title('Shapley vs Baseline Reward - KAZ')
         self.ax_shapley.legend(loc='lower right')
         self.fig_shapley.show()
 
-        # Use reward normalization/scaling if required
+        # Reward normalization or scaling if enabled
         if self.args.use_reward_norm:
             print("------use reward norm------")
             self.reward_norm = Normalization(shape=self.args.N)
@@ -87,13 +85,14 @@ class Runner_KAZ:
             print("------use reward scaling------")
             self.reward_scaling = RewardScaling(shape=self.args.N, gamma=self.args.gamma)
         
-        # Initialize GIF saving step (e.g., every 20000 steps)
+        # Initialize GIF saving step
         self.next_save_step = 20000
 
     def run(self):
-        evaluate_num = -1  # Number of evaluations performed
-        shapley_rewards_temp = []  # Temporarily store Shapley values after each training cycle
-        last_interval = 0         # Last step at which Shapley values were updated
+        evaluate_num = -1
+        shapley_rewards_temp = []     
+        original_rewards_temp = []    
+        last_interval = 0         
 
         while self.total_steps < self.args.max_train_steps:
             if self.total_steps // self.args.evaluate_freq > evaluate_num:
@@ -104,22 +103,28 @@ class Runner_KAZ:
             self.total_steps += episode_steps
 
             if self.replay_buffer.episode_num == self.args.batch_size:
-                # Train the agent and obtain the Shapley value 
-                avg_shapley_reward, _ = self.agent.train(self.replay_buffer, self.total_steps)
+                # Train agent and obtain Shapley and true rewards
+                avg_shapley_reward, true_reward = self.agent.train(self.replay_buffer, self.total_steps)
                 self.replay_buffer.reset_buffer()
                 
-                # Save temporary Shapley reward
                 shapley_rewards_temp.append(avg_shapley_reward)
+                original_rewards_temp.append(np.mean(true_reward))
                 
-                # Update and plot Shapley rewards every 20000 steps
+                # Update every 20K steps
                 if self.total_steps - last_interval >= 20000:
-                    rewards_array = np.array(shapley_rewards_temp)  # Array shape: (num_train, N)
-                    avg_20k = np.mean(rewards_array, axis=0)          # Average for each agent, shape: (N,)
+                    rewards_array = np.array(shapley_rewards_temp)  
+                    avg_20k = np.mean(rewards_array, axis=0)          
+                    baseline_avg = np.mean(original_rewards_temp) * 0.2  
+                    
                     self.shapley_eval_steps.append(self.total_steps)
                     self.shapley_rewards.append(avg_20k)
+                    self.original_rewards.append(baseline_avg)
+                    
                     self.plot_shapley_rewards()
+                    self.save_shapley_csv()
                     
                     shapley_rewards_temp = []
+                    original_rewards_temp = []
                     last_interval = self.total_steps
 
         self.evaluate_policy()  # Final evaluation
@@ -130,7 +135,7 @@ class Runner_KAZ:
 
     def evaluate_policy(self):
         evaluate_reward = 0
-        for _ in range(self.args.evaluate_times):
+        for _ in range(int(self.args.evaluate_times)):
             episode_reward, _ = self.run_episode(evaluate=True)
             evaluate_reward += episode_reward
 
@@ -141,13 +146,13 @@ class Runner_KAZ:
         print("total_steps:{} \t evaluate_reward:{}".format(self.total_steps, evaluate_reward))
         self.writer.add_scalar('evaluate_step_rewards_KAZ', evaluate_reward, global_step=self.total_steps)
         
-        # Save the model if needed
+        # Save the model checkpoint
         self.agent.save_model("KAZ", 1, self.seed, self.total_steps)
         
         self.save_eval_csv()
         self.plot_eval_rewards()
 
-        # Save a GIF every time evaluation is performed if the save step is reached
+        # Save a GIF if the step threshold is reached
         if self.total_steps >= self.next_save_step:
             gif_filename = './data_train/KAZ_seed_{}_steps_{}.gif'.format(self.seed, self.total_steps)
             self.render_and_save_gif(gif_filename)
@@ -161,8 +166,17 @@ class Runner_KAZ:
             for step, reward in zip(self.eval_steps, self.evaluate_rewards):
                 writer.writerow([step, reward])
 
+    def save_shapley_csv(self):
+        csv_filename = './data_train/KAZ_seed_{}_shapley.csv'.format(self.seed)
+        with open(csv_filename, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            header = ['Training Steps'] + [f'Agent {i+1} Shapley' for i in range(self.args.N)] + ['Baseline Reward']
+            writer.writerow(header)
+            for step, shapley, baseline in zip(self.shapley_eval_steps, self.shapley_rewards, self.original_rewards):
+                row = [step] + list(shapley) + [baseline]
+                writer.writerow(row)
+
     def plot_eval_rewards(self):
-        # Update data for the evaluation reward plot
         self.line.set_xdata(self.eval_steps)
         self.line.set_ydata(self.evaluate_rewards)
         self.ax.relim()
@@ -178,22 +192,28 @@ class Runner_KAZ:
         self.ax.xaxis.set_major_formatter(FuncFormatter(dynamic_formatter))
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
-        #save
         self.fig.savefig('./data_train/KAZ_seed_{}_eval.png'.format(self.seed))
 
     def plot_shapley_rewards(self):
-        # Initialize lines for each agent if not already created
+        # Initialize plot lines for each agent and baseline reward if not already done
         if not self.lines_shapley:
             for agent in range(self.args.N):
-                line, = self.ax_shapley.plot([], [], label=f'Agent {agent+1}')
+                line, = self.ax_shapley.plot([], [], label=f'Agent {agent+1} Shapley')
                 self.lines_shapley.append(line)
+            if self.line_original is None:
+                self.line_original, = self.ax_shapley.plot([], [], label='Baseline Reward', 
+                                                            color='black', linestyle='--')
             self.ax_shapley.legend(loc='lower right')
         
-        # Update data for each agent
+        # Update Shapley reward lines for each agent
         for agent, line in enumerate(self.lines_shapley):
             rewards_agent = [reward[agent] for reward in self.shapley_rewards]
             line.set_xdata(self.shapley_eval_steps)
             line.set_ydata(rewards_agent)
+        
+        # Update baseline reward line
+        self.line_original.set_xdata(self.shapley_eval_steps)
+        self.line_original.set_ydata(self.original_rewards)
         
         self.ax_shapley.relim()
         self.ax_shapley.autoscale_view()
@@ -209,46 +229,32 @@ class Runner_KAZ:
 
         self.fig_shapley.canvas.draw()
         self.fig_shapley.canvas.flush_events()
-        #save
         self.fig_shapley.savefig('./data_train/KAZ_seed_{}_shapley.png'.format(self.seed))
-
 
     def render_and_save_gif(self, filename='KAZ.gif'):
         frames = []
         obs_dict = self.env.reset()
         done = False
-        # Collect frames during an episode
+        # Capture frames during an episode
         while not done:
-            # Get frame from the environment
             frame = self.env.render(mode='rgb_array')
             frames.append(frame)
-            # Convert observations from dictionary to numpy array
-            obs_list = []
-            for agent in self.env.agents:
-                obs_list.append(obs_dict[agent].flatten())
+            # Prepare observation array for agents
+            obs_list = [obs_dict[agent].flatten() for agent in self.env.agents]
             obs_n = np.stack(obs_list, axis=0)
-            # Select actions (in evaluation mode: without adding noise)
             a_n, _ = self.agent.choose_action(obs_n, evaluate=True)
-            # Create action dictionary for the environment
-            actions = {}
-            for i, agent in enumerate(self.env.agents):
-                actions[agent] = a_n[i]
+            actions = {agent: a_n[i] for i, agent in enumerate(self.env.agents)}
             obs_dict, _, done, _ = self.env.step(actions)
-        # Save frames as a GIF file
         imageio.mimsave(filename, frames, fps=30)
         print("Saved GIF to", filename)
-        # Display GIF if running in a notebook
         ipy_display.display(ipy_display.Image(filename=filename))
 
     def run_episode(self, evaluate=False):
         episode_reward = 0
-        # Reset the environment which returns a dictionary of observations for each agent
         obs_dict = self.env.reset()
-        # Flatten each observation and arrange in order of self.env.agents
-        obs_list = []
-        for agent in self.env.agents:
-            obs_list.append(obs_dict[agent].flatten())
-        obs_n = np.stack(obs_list, axis=0)  # shape: (N, obs_dim)
+        # Process initial observations
+        obs_list = [obs_dict[agent].flatten() for agent in self.env.agents]
+        obs_n = np.stack(obs_list, axis=0)
         
         if self.args.use_reward_scaling:
             self.reward_scaling.reset()
@@ -257,32 +263,18 @@ class Runner_KAZ:
             self.agent.critic.rnn_hidden = None
         
         for episode_step in range(self.args.episode_limit):
-            # Choose actions for all agents: a_n has shape (N,) and a_logprob_n has shape (N,)
             a_n, a_logprob_n = self.agent.choose_action(obs_n, evaluate=evaluate)
-            # Create global state: concatenate all agents' observations
-            state = np.concatenate(obs_n, axis=0)  # shape: (N*obs_dim,)
-            v_n = self.agent.get_value(state)  # Expected to return an array (N,)
+            state = np.concatenate(obs_n, axis=0)
+            v_n = self.agent.get_value(state)
             
-            # Create action dictionary for the environment
-            actions = {}
-            for i, agent in enumerate(self.env.agents):
-                actions[agent] = a_n[i]
-            
+            actions = {agent: a_n[i] for i, agent in enumerate(self.env.agents)}
             next_obs_dict, r_dict, done, _ = self.env.step(actions)
             
-            # Convert next observations: flatten each agent's observation
-            next_obs_list = []
-            for agent in self.env.agents:
-                next_obs_list.append(next_obs_dict[agent].flatten())
+            next_obs_list = [next_obs_dict[agent].flatten() for agent in self.env.agents]
             obs_next_n = np.stack(next_obs_list, axis=0)
+            r_list = [r_dict[agent] for agent in self.env.agents]
+            r_n = np.array(r_list)
             
-            # Convert rewards: get in the order of self.env.agents
-            r_list = []
-            for agent in self.env.agents:
-                r_list.append(r_dict[agent])
-            r_n = np.array(r_list)  # shape: (N,)
-            
-            # Accumulate global reward (here using the sum of rewards of all agents, can be adjusted based on objectives)
             episode_reward += r_n.sum()
             
             if not evaluate:
@@ -290,7 +282,6 @@ class Runner_KAZ:
                     r_n = self.reward_norm(r_n)
                 elif self.args.use_reward_scaling:
                     r_n = self.reward_scaling(r_n)
-                # Store the transition: store all information for all agents
                 self.replay_buffer.store_transition(episode_step, obs_n, state, v_n, a_n, a_logprob_n, r_n, done)
             
             obs_n = obs_next_n
@@ -305,16 +296,16 @@ class Runner_KAZ:
         return episode_reward, episode_step + 1
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser("Hyperparameters Setting for MAPPO in KAZ environment")
-    parser.add_argument("--max_train_steps", type=int, default=int(3e6), help="Maximum number of training steps")
-    parser.add_argument("--episode_limit", type=int, default=500, help="Maximum number of steps per episode")
-    parser.add_argument("--evaluate_freq", type=float, default=5000, help="Evaluate the policy every 'evaluate_freq' steps")
+    parser = argparse.ArgumentParser("Hyperparameters for MAPPO in KAZ environment")
+    parser.add_argument("--max_train_steps", type=int, default=int(3e6), help="Maximum training steps")
+    parser.add_argument("--episode_limit", type=int, default=500, help="Max steps per episode")
+    parser.add_argument("--evaluate_freq", type=float, default=5000, help="Evaluation frequency (steps)")
     parser.add_argument("--evaluate_times", type=float, default=3, help="Number of evaluations")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size (number of episodes)")
     parser.add_argument("--mini_batch_size", type=int, default=8, help="Minibatch size (number of episodes)")
-    parser.add_argument("--rnn_hidden_dim", type=int, default=64, help="Number of neurons in RNN hidden layers")
-    parser.add_argument("--mlp_hidden_dim", type=int, default=64, help="Number of neurons in MLP hidden layers")
-    parser.add_argument("--alliance_hidden_dim", type=int, default=64, help="Number of neurons in alliance hidden layers")
+    parser.add_argument("--rnn_hidden_dim", type=int, default=64, help="RNN hidden layer size")
+    parser.add_argument("--mlp_hidden_dim", type=int, default=64, help="MLP hidden layer size")
+    parser.add_argument("--alliance_hidden_dim", type=int, default=64, help="Alliance hidden layer size")
     parser.add_argument("--embed_dim", type=int, default=64, help="Embedding dimension")
     parser.add_argument("--lr", type=float, default=5e-4, help="Learning rate")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor")
@@ -324,14 +315,14 @@ if __name__ == '__main__':
     parser.add_argument("--use_adv_norm", type=bool, default=True, help="Use advantage normalization")
     parser.add_argument("--use_reward_norm", type=bool, default=True, help="Use reward normalization")
     parser.add_argument("--use_reward_scaling", type=bool, default=False, help="Use reward scaling")
-    parser.add_argument("--entropy_coef", type=float, default=0.01, help="Policy entropy coefficient")
+    parser.add_argument("--entropy_coef", type=float, default=0.01, help="Entropy coefficient")
     parser.add_argument("--use_lr_decay", type=bool, default=True, help="Use learning rate decay")
     parser.add_argument("--use_grad_clip", type=bool, default=True, help="Use gradient clipping")
     parser.add_argument("--use_orthogonal_init", type=bool, default=True, help="Use orthogonal initialization")
     parser.add_argument("--set_adam_eps", type=bool, default=True, help="Set Adam epsilon=1e-5")
-    parser.add_argument("--use_relu", type=bool, default=False, help="Use ReLU (if False, use tanh)")
+    parser.add_argument("--use_relu", type=bool, default=False, help="Use ReLU (otherwise tanh)")
     parser.add_argument("--use_rnn", type=bool, default=False, help="Whether to use RNN")
-    parser.add_argument("--add_agent_id", type=bool, default=False, help="Whether to add agent id")
+    parser.add_argument("--add_agent_id", type=bool, default=False, help="Whether to add agent ID")
     parser.add_argument("--use_value_clip", type=bool, default=False, help="Whether to use value clipping")
 
     args = parser.parse_args()
