@@ -297,7 +297,7 @@ class Runner_KAZ:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser("Hyperparameters for MAPPO in KAZ environment")
-    parser.add_argument("--max_train_steps", type=int, default=int(3e6), help="Maximum training steps")
+    parser.add_argument("--max_train_steps", type=int, default=int(1e6), help="Maximum training steps")
     parser.add_argument("--episode_limit", type=int, default=500, help="Max steps per episode")
     parser.add_argument("--evaluate_freq", type=float, default=5000, help="Evaluation frequency (steps)")
     parser.add_argument("--evaluate_times", type=float, default=3, help="Number of evaluations")
