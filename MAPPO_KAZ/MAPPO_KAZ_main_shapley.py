@@ -326,5 +326,9 @@ if __name__ == '__main__':
     parser.add_argument("--use_value_clip", type=bool, default=False, help="Whether to use value clipping")
 
     args = parser.parse_args()
-    runner = Runner_KAZ(args, seed=0)
-    runner.run()
+    for seed in [1, 2, 3]:
+        print(f"Running training with seed {seed}")
+        runner = Runner_KAZ(args, seed=seed)
+        runner.run()
+    #runner = Runner_KAZ(args, seed=0)
+    #runner.run()
